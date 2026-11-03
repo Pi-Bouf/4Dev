@@ -51,29 +51,24 @@ public sealed partial class MapService
     private async Task LoadCompanionsAsync(Character ch)
     {
         if (CompanionStore is not { } db) return;
-        try
+        var load = await db.LoadCompanionsAsync(ch.CharId);
+        foreach (var row in load.Companions)
         {
-            var load = await db.LoadCompanionsAsync(ch.CharId);
-            foreach (var row in load.Companions)
+            if (row.Stats is not { Length: >= 6 } || row.ItemIds is not { Length: >= 2 } || row.EndTimes is not { Length: >= 2 })
+                throw new InvalidDataException("Incomplete saved companion row.");
+            var c = new Companion
             {
-                var c = new Companion
-                {
-                    Slot = row.Slot, MonId = row.MonId, Level = row.Level, Name = row.Name, Exp = row.Exp,
-                    NextExp = Companion.NextExpFor(row.Level), Life = row.Life, StatPoints = row.StatPoints,
-                    Effect = row.Effect, BonusId = row.BonusId, Tick = row.Tick,
-                };
-                Array.Copy(row.Stats, c.Stats, 6);
-                Array.Copy(row.ItemIds, c.ItemIds, 2);
-                Array.Copy(row.EndTimes, c.EndTimes, 2);
-                ch.Companions[c.Slot] = c;
-            }
-            ch.CompanionSlot = load.SummonedSlot;
-            ch.Medals = load.Medals;
+                Slot = row.Slot, MonId = row.MonId, Level = row.Level, Name = row.Name, Exp = row.Exp,
+                NextExp = Companion.NextExpFor(row.Level), Life = row.Life, StatPoints = row.StatPoints,
+                Effect = row.Effect, BonusId = row.BonusId, Tick = row.Tick,
+            };
+            Array.Copy(row.Stats, c.Stats, 6);
+            Array.Copy(row.ItemIds, c.ItemIds, 2);
+            Array.Copy(row.EndTimes, c.EndTimes, 2);
+            ch.Companions[c.Slot] = c;
         }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Char {Char} companion load failed; continuing without companions.", ch.CharId);
-        }
+        ch.CompanionSlot = load.SummonedSlot;
+        ch.Medals = load.Medals;
     }
 
     private static List<CompanionRow> CompanionSnapshot(Character ch) => ch.Companions.Values.Select(c =>
@@ -334,6 +329,7 @@ public sealed partial class MapService
         if (s.Char is not { } ch) return;
         byte slot = r.ReadByte();
         if (!ch.Companions.TryGetValue(slot, out var c)) return;
+        if (c.Level >= CompanionMaxLevel) return;
         if (!_templates.CompanionBonuses.TryGetValue(c.BonusId, out var bonus)) return;
         if (c.Exp < c.NextExp) return;
 
@@ -367,7 +363,7 @@ public sealed partial class MapService
 
         if (t.Kind == IkCompExp)
         {
-            if (c.Level > CompanionMaxLevel || c.Exp >= c.NextExp) return;
+            if (c.Level >= CompanionMaxLevel || c.Exp >= c.NextExp) return;
             c.Exp = Math.Min(c.Exp + t.UseValue, c.NextExp);
         }
         else
@@ -533,7 +529,7 @@ public sealed partial class MapService
         uint drop = c.Life <= CompanionLowLife ? 5u : 1u;
         c.Life = c.Life > drop ? c.Life - drop : 0;
         uint gain = c.Life >= 10000 ? 60u : 30u;
-        if (c.Level <= 19) c.Exp = Math.Min(c.Exp + gain, c.NextExp);
+        if (c.Level < CompanionMaxLevel) c.Exp = Math.Min(c.Exp + gain, c.NextExp);
 
         var w = new PacketWriter(Msg.CS_UPDATECOMPANIONBYSYSTEM_REQ);
         w.WriteByte(ch.CompanionSlot); w.WriteUInt32(c.Life); w.WriteUInt32(c.Exp);

@@ -49,6 +49,7 @@ public:
 	DWORD m_dwUserID;
 	DWORD m_dwKickID;
 	DWORD m_dwKEY;
+	CString m_strLoginResumeToken;
 
 	CTEvent m_vResetEvent;
 	BYTE m_bCreateCardCnt;
@@ -367,6 +368,8 @@ public:
 		BYTE bChannel,
 		DWORD dwCharID);
 
+	// Use the same credential representation for initial login and the post-2FA retry.
+	void SendLoginRequest();
 	void SendCS_LOGIN_REQ(
 		CString strUserID,
 		CString strPasswd,

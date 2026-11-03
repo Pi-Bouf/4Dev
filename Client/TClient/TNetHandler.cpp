@@ -29,6 +29,10 @@ int CTClientWnd::OnCS_LOGIN_ACK( CTachyonSession *pSession, CPacket *pPacket)
 		>> iDuration
 		>> bEternal;
 
+	m_strLoginResumeToken.Empty();
+	if( bResult == LR_SUCCESS || bResult == LR_NEEDAGREEMENT )
+		(*pPacket) >> m_strLoginResumeToken;
+
 	// Get IP.
 	SOCKADDR_IN _name;
 	TSOCKLEN _namelen = sizeof( SOCKADDR_IN );
@@ -119,17 +123,17 @@ int CTClientWnd::OnCS_LOGIN_ACK( CTachyonSession *pSession, CPacket *pPacket)
 				if(!bEternal)
 				{
 					if(cTime.GetDays() != 0)
-						strMessage.Format("Your Account has been suspended.\n Reason: %s\n Duration: %d days", (LPCTSTR)strReason, cTime.GetDays());
+						strMessage.Format(CTChart::Localize("Your Account has been suspended.\n Reason: %s\n Duration: %d days"), (LPCTSTR)strReason, cTime.GetDays());
 					else
 					{
 						if(cTime.GetHours() != 0)
-							strMessage.Format("Your Account has been suspended.\n Reason: %s\n Time Left: %d hours and %d minutes", (LPCTSTR)strReason, cTime.GetHours(), cTime.GetMinutes());
+							strMessage.Format(CTChart::Localize("Your Account has been suspended.\n Reason: %s\n Time Left: %d hours and %d minutes"), (LPCTSTR)strReason, cTime.GetHours(), cTime.GetMinutes());
 						else
-							strMessage.Format("Your Account has been suspended.\n Reason: %s\n Time Left: %d minutes", (LPCTSTR)strReason, cTime.GetMinutes());
+							strMessage.Format(CTChart::Localize("Your Account has been suspended.\n Reason: %s\n Time Left: %d minutes"), (LPCTSTR)strReason, cTime.GetMinutes());
 					}
 				}
 				else
-					strMessage.Format("Your Account has been permanently banned.\n Reason: %s", (LPCTSTR)strReason);
+					strMessage.Format(CTChart::Localize("Your Account has been permanently banned.\n Reason: %s"), (LPCTSTR)strReason);
 
 				DWORD dwFrameID = ID_FRAME_LOBBY_1BTN_MSGBOX;
 				DWORD dwYesID = GM_CLOSE_MSGBOX;
@@ -160,7 +164,7 @@ int CTClientWnd::OnCS_LOGIN_ACK( CTachyonSession *pSession, CPacket *pPacket)
 			break;
 		case LR_PWCHANGE:
 			{
-				CString strMessage = "You have to change your password on the website in order to login.";
+				CString strMessage = CTChart::Localize("You have to change your password on the website in order to login.");
 
 				DWORD dwFrameID = ID_FRAME_LOBBY_1BTN_MSGBOX;
 				DWORD dwYesID = GM_CLOSE_MSGBOX;
@@ -803,14 +807,7 @@ int CTClientWnd::OnCS_SECURITYRESULT_ACK( CTachyonSession *pSession, CPacket *pP
 	case CODE_CORRECT:
 		{
 			OnGM_CLOSE_MSGBOX();
-			TFrame* pFRAME = m_TNet.FindFrame(ID_FRAME_LOGIN_NEW);
-
-			TComponent *pEditID = pFRAME->FindKid(ID_CTRLINST_ID);
-			TComponent *pEditPW = pFRAME->FindKid(ID_CTRLINST_PW);
-
-			SendCS_LOGIN_REQ(
-				pEditID->m_strText,
-				pEditPW->m_strText);
+			SendLoginRequest();
 
 			TFrame *pFRAME2 = m_MessageBox.FindFrame(1300);
 			if(pFRAME2)

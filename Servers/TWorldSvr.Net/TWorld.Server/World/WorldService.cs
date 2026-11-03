@@ -2,6 +2,7 @@
 using TWorld.Data;
 using TWorld.Protocol;
 using TWorld.Server.Net;
+using TWorld.Server.Security;
 
 namespace TWorld.Server.World;
 
@@ -23,10 +24,12 @@ public sealed partial class WorldService
     private readonly GlobalDatabase? _globalDb;
     private readonly ILogger<WorldService> _log;
     private uint _fakeGuildSeq; // used only when no DB is configured (tests)
+    private readonly Func<ServerSession, ushort, bool>? _authorizePeer;
 
     public WorldService(WorldState state, GuildDatabase? guildDb, ILogger<WorldService> log,
         SocialDatabase? socialDb = null, RankDatabase? rankDb = null, BowDatabase? bowDb = null,
-        BrDatabase? brDb = null, GameDatabase? gameDb = null, GlobalDatabase? globalDb = null)
+        BrDatabase? brDb = null, GameDatabase? gameDb = null, GlobalDatabase? globalDb = null,
+        Func<ServerSession, ushort, bool>? authorizePeer = null)
     {
         _state = state;
         _guildDb = guildDb;
@@ -35,8 +38,11 @@ public sealed partial class WorldService
         _bowDb = bowDb;
         _brDb = brDb;
         _gameDb = gameDb;
+        CastleApplicantStore = gameDb;
+        ReservedPostStore = gameDb;
         _globalDb = globalDb;
         _log = log;
+        _authorizePeer = authorizePeer;
     }
 
     public WorldState State => _state;
@@ -53,6 +59,12 @@ public sealed partial class WorldService
         var r = new PacketReader(packet);
         try
         {
+            if (!(_authorizePeer?.Invoke(session, r.Id) ?? AuthorizePeer(session, r.Id)))
+            {
+                _log.LogWarning("Unauthorized message 0x{Id:X4} from {Endpoint} ({Role}).", r.Id, conn.RemoteEndPoint, conn.Identity.Role);
+                conn.Close();
+                return;
+            }
             switch (r.Id)
             {
                 // --- Phase 1: map connect + character session ---
@@ -143,6 +155,8 @@ public sealed partial class WorldService
     private void OnMW_CONNECT_ACK(ServerSession session, PacketReader r)
     {
         ushort wServerId = r.ReadUInt16();
+        if (_authorizePeer is null && (session.Conn.Identity.ServerId != wServerId || session.WId != 0))
+        { session.Conn.Close(); return; }
         byte count = r.ReadByte();
         if (_state.Servers.ContainsKey(wServerId))
         {
@@ -472,7 +486,7 @@ public sealed partial class WorldService
 
     private void OnMW_CHAT_ACK(ServerSession session, byte[] packet)
     {
-        foreach (var s in _state.Servers.Values) s.Conn.Send(packet);
+        RoutePlayerChat(session, new PacketReader(packet));
     }
 
     // ===== Phase 2: guild handlers =====
@@ -1017,6 +1031,7 @@ public sealed partial class WorldService
         if (_state.FindTacticsGuild(ch.CharId)?.FindTactics(ch.CharId) is { } tm) tm.OnlineChar = null;
         if (ch.Party is not null) LeaveParty(ch, 0);   // C++ CloseChar → LeaveParty(pTCHAR, 0)
         WarCountryLeave(ch);
+        CancelTmsPrompts(ch);
         if (ch.TmsIds.Count > 0) TmsLeaveAll(ch);
         _state.Characters.Remove(ch.CharId);
         if (!string.IsNullOrEmpty(ch.Name)) _state.CharactersByName.Remove(ch.Name);

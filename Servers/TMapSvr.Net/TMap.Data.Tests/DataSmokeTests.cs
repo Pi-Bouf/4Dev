@@ -62,6 +62,81 @@ public class DataSmokeTests
         _out.WriteLine($"Loaded {store.Items.Count} item templates.");
     }
 
+    [Fact]
+    public async Task LoadTemplates_MonsterHuntKindsMatchSql_WhenConfigured()
+    {
+        if (!Configured()) return;
+        var store = await new GameDatabase(GameCs!).LoadTemplatesAsync();
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(GameCs);
+        await connection.OpenAsync();
+        await using var command = new Microsoft.Data.SqlClient.SqlCommand("SELECT wID,wKind FROM TMONSTERCHART",connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        int count=0,variants=0;
+        while (await reader.ReadAsync())
+        {
+            ushort id=unchecked((ushort)reader.GetInt16(0)),kind=unchecked((ushort)reader.GetInt16(1));
+            Assert.Equal((ushort?)kind,store.MonsterTemplates[id].HuntKind);
+            count++;if(id!=kind)variants++;
+        }
+        Assert.True(count>0);Assert.True(variants>0);
+        _out.WriteLine($"Verified {count} monster hunt kinds, including {variants} variant mappings; read-only.");
+    }
+
+    [Fact]
+    public async Task LoadTemplates_WeaponAmmoFieldsMatchSql_WhenConfigured()
+    {
+        if (!Configured()) return;
+        var store = await new GameDatabase(GameCs!).LoadTemplatesAsync();
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(GameCs);
+        await connection.OpenAsync();
+        await using var command = new Microsoft.Data.SqlClient.SqlCommand(
+            "SELECT wItemID, bUseItemKind, bUseItemCount FROM TITEMCHART WHERE bUseItemKind <> 0 OR bUseItemCount <> 0", connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        int checkedWeapons = 0;
+        while (await reader.ReadAsync())
+        {
+            ushort id = unchecked((ushort)reader.GetInt16(0));
+            Assert.True(store.Items.TryGetValue(id, out var item), $"Missing item template {id}");
+            Assert.Equal((reader.GetByte(1), reader.GetByte(2)), (item!.UseItemKind, item.UseItemCount));
+            checkedWeapons++;
+        }
+        Assert.True(checkedWeapons > 0, "The database should contain ammunition-consuming weapons.");
+        _out.WriteLine($"Verified ammunition kind/count against SQL for {checkedWeapons} templates; read-only.");
+    }
+
+    [Fact]
+    public async Task LoadTemplates_ActiveRequirementsAndWearFieldsMatchSql_WhenConfigured()
+    {
+        if (!Configured()) return;
+        var store = await new GameDatabase(GameCs!).LoadTemplatesAsync();
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(GameCs);
+        await connection.OpenAsync();
+        int skills = 0, magics = 0;
+        await using (var command = new Microsoft.Data.SqlClient.SqlCommand(
+            "SELECT wID, wPrevActiveID, wTargetActiveID, bDuraSlot FROM TSKILLCHART", connection))
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync())
+            {
+                ushort id = unchecked((ushort)reader.GetInt16(0));
+                Assert.True(store.Skills.TryGetValue(id, out var skill), $"Missing skill template {id}");
+                Assert.Equal((unchecked((ushort)reader.GetInt16(1)), unchecked((ushort)reader.GetInt16(2)), reader.GetByte(3)),
+                    (skill!.PrevActiveId, skill.TargetActiveId, skill.DuraSlot));
+                skills++;
+            }
+        await using (var command = new Microsoft.Data.SqlClient.SqlCommand(
+            "SELECT bMagic, wAutoSkill FROM TITEMMAGICCHART", connection))
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync())
+            {
+                byte id = reader.GetByte(0);
+                Assert.True(store.Magics.TryGetValue(id, out var magic), $"Missing magic template {id}");
+                Assert.Equal(unchecked((ushort)reader.GetInt16(1)), magic!.AutoSkill);
+                magics++;
+            }
+        Assert.True(skills > 0 && magics > 0);
+        _out.WriteLine($"Verified active requirements/wear for {skills} skills and auto-skill for {magics} magic options; read-only.");
+    }
+
     /// <summary>
     /// The AI-script load against the real baseline. Pinned to the shape actually in
     /// <c>TGame_gsp</c> (47 <c>TAICHART</c> rows / 18 commands / 6 conditions → 2 scripts), because that
@@ -239,7 +314,7 @@ DELETE FROM TCOMPANIONITEMTABLE WHERE dwCharID=@c; DELETE FROM TLASTCOMPANIONTAB
         }
 
         var store = await db.LoadTemplatesAsync();
-        Assert.Equal(40, store.Mounts.Count);
+        Assert.True(store.Mounts.Count >= 40); // the baseline has 40; later content migrations import additional mounts
         Assert.Equal(44, store.CompanionRunes.Count);
         Assert.Equal(new CompanionBonus(11, 1f, 2f), store.CompanionBonuses[11]);
         Assert.Equal(10, store.CompanionBonuses.Count);                    // 12 rows, 11 and 12 duplicated

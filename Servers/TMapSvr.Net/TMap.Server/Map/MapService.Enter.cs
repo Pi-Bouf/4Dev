@@ -67,9 +67,18 @@ public sealed partial class MapService
             return;
         }
 
-        if (s.CharId != 0 && s.CharId != charId)
+        if (s.State != EnterState.Connected || s.CharId != 0)
         {
             _log.LogWarning("CONNECT for char {New} on a session already bound to {Old}.", charId, s.CharId);
+            return;
+        }
+
+        var entry = new MapEntry(userId, charId, key, _opt.GroupId, channel,
+            EntryIp(ip), port);
+        if (!await ValidateEntryAsync(entry, enter: false))
+        {
+            SendCS_CONNECT_ACK(s, ConnectResult.Internal, null);
+            s.Conn.Close();
             return;
         }
 
@@ -92,7 +101,10 @@ public sealed partial class MapService
         _state.Register(s);
 
         // Resolve the character up front (DB or synthesized) so the handshake ACKs carry real data.
-        await EnsureCharAsync(s);
+        if (!await TryEnsureCharAsync(s)) return;
+
+        if (!await LoadSecurityCode(s)) return;
+        if (!NormalizeMeetingEntry(s)) return;
 
         SendMW_ADDCHAR_ACK(s);
         _log.LogInformation("Char {Char} (user {User}, ch {Ch}) entering; announced to world.", charId, userId, channel);
@@ -117,13 +129,26 @@ public sealed partial class MapService
         uint charId = r.ReadUInt32();
         uint key = r.ReadUInt32();
         var s = _state.FindByChar(charId);
-        if (s is null) return;
+        if (s is null || s.Key != key) return;
 
-        await EnsureCharAsync(s);
+        // Also runs on promotion of an existing secondary connection to the main map.
+        {
+            var entry = new MapEntry(s.UserId, s.CharId, s.Key, _opt.GroupId, s.Channel,
+                EntryIp(s.ClientIp), s.ClientPort);
+            if (!await ValidateEntryAsync(entry, enter: true))
+            {
+                SendCS_CONNECT_ACK(s, ConnectResult.Internal, null);
+                s.Conn.Close();
+                _state.Remove(s);
+                return;
+            }
+            s.EntryValidated = true;
+        }
+
+        if (!await TryEnsureCharAsync(s)) return;
         var ch = s.Char!;
 
-        // The C++ routes this through DM_ENTERMAPSVR (TEnterServer) then DM_LOADCHAR before replying. We fold
-        // that into an inline best-effort load and reply directly, with CN_SUCCESS.
+        // TEnterServer succeeded for this exact session before any successful world response.
         var w = new PacketWriter(Msg.MW_ENTERSVR_ACK);
         w.WriteUInt32(charId);
         w.WriteUInt32(key);
@@ -240,7 +265,7 @@ public sealed partial class MapService
         uint key = r.ReadUInt32();
         // channel, mapId, pos follow — validated in the C++; single-map deployment needs no cross-routing.
         var s = _state.FindByChar(charId);
-        if (s is null) return;
+        if (s is null || s.Key != key || !s.EntryValidated) return;
 
         var w = new PacketWriter(Msg.MW_ROUTE_ACK);
         w.WriteUInt32(charId);
@@ -249,12 +274,22 @@ public sealed partial class MapService
         _world.Send(w);
     }
 
-    private void OnMW_ENTERCHAR_REQ(PacketReader r)
+    private async Task OnMW_ENTERCHAR_REQ(PacketReader r)
     {
         uint charId = r.ReadUInt32();
         uint key = r.ReadUInt32();
         var s = _state.FindByChar(charId);
-        if (s?.Char is not { } ch) { return; }
+        if (s is null || s.Key != key || s.Char is not { } ch) return;
+        // A secondary map joins an already-authenticated world character through ENTERCHAR rather
+        // than ENTERSVR. Recheck its credentials, but do not replace the main map's DB route.
+        if (!s.EntryValidated)
+        {
+            var entry = new MapEntry(s.UserId, s.CharId, s.Key, _opt.GroupId, s.Channel,
+                EntryIp(s.ClientIp), s.ClientPort);
+            if (!await ValidateEntryAsync(entry, enter: false))
+            { s.Conn.Close(); _state.Remove(s); return; }
+            s.EntryValidated = true;
+        }
 
         // The world tells the map the char's live state. We read the leading fields we model and overlay
         // them onto the loaded character (the deep block — recall-mons, soulmate, comment — is skipped;
@@ -319,7 +354,7 @@ public sealed partial class MapService
         for (int i = 0; i < count; i++) serverIds.Add(r.ReadByte());
 
         var s = _state.FindByChar(charId);
-        if (s is null) return;
+        if (s is null || s.Key != key || !s.EntryValidated) return;
 
         SendCS_CONNECT_ACK(s, result, serverIds);
 
@@ -362,16 +397,25 @@ public sealed partial class MapService
 
     // ---- client "ready" → live in the world ----
 
-    private void OnCS_CONREADY_REQ(ClientSession s, PacketReader r)
+    private async Task OnCS_CONREADY_REQ(ClientSession s, PacketReader r)
     {
         if (s.State is not (EnterState.Granted or EnterState.InGame)) return;
         if (s.Char is null) return;
+        if (s.TeleportPending && s.State == EnterState.InGame) return; // an old ready packet cannot finish a new move
+        if (s.State == EnterState.Granted)
+            await RecoverQuestPostContinuationsAsync(s);
 
         bool firstEntry = s.State != EnterState.InGame;
         s.State = EnterState.InGame;
 
         if (firstEntry)
         {
+            s.TeleportPending = false;
+            if (s.IsMain && CheckMapGuild(s.Char))
+            {
+                ReturnFromGuildDestination(s, s.Char);
+                return;
+            }
             // Place into the world grid, then exchange CS_ENTER_ACK with the 3×3-cell neighbours
             // (CTMap::EnterMAP adds the player to its centre cell, then CTCell::EnterPlayer runs the
             // bidirectional exchange across the neighbour block). The player must be in the grid first so
@@ -391,6 +435,7 @@ public sealed partial class MapService
             SkyGardenEnterMap(s, s.Char);  // on the sky garden's map: one's camp and the garden's state (InitMap)
             CastleEnterMap(s, s.Char);     // on a castle's map: signed up, or sent out (InitMap, MapService.Castle.cs)
             TournamentEnterMap(s, s.Char); // the lounge and the tournament maps (InitMap, MapService.TournamentMatch.cs)
+            await WelcomeMailAtEntryAsync(s);
             _log.LogInformation("Char {Char} live on map {Map} ch {Ch}.", s.CharId, s.Char.MapId, s.Channel);
         }
     }
@@ -412,9 +457,9 @@ public sealed partial class MapService
         var ch = s.Char!;
         var w = new PacketWriter(Msg.CS_CHARINFO_ACK, capacity: 512);
         w.WriteUInt32(ch.CharId);
-        w.WriteByte(0);              // secure code created
-        w.WriteByte(0);              // secure code currently unlocked
-        w.WriteByte(0);              // secure code disabled
+        w.WriteBool(CodeFor(s) is not null);
+        w.WriteBool(s.SecurityUnlocked);
+        w.WriteBool(CodeFor(s) is { Enabled: false });
         w.WriteUInt16(ch.TitleId);
         w.WriteString(ch.Name);
         w.WriteByte(ch.StartAct);
@@ -443,8 +488,8 @@ public sealed partial class MapService
         w.WriteUInt32(ch.Gold);
         w.WriteUInt32(ch.Silver);
         w.WriteUInt32(ch.Cooper);
-        w.WriteUInt32(ch.PrevExp);
-        w.WriteUInt32(ch.NextExp);
+        w.WriteUInt32(_templates.LevelExpOf(ch.Level - 1) ?? 0);
+        w.WriteUInt32(_templates.LevelExpOf(ch.Level) ?? 0);
         w.WriteUInt32(ch.Exp);
         uint maxHp = MaxHpFor(ch), maxMp = MaxMpFor(ch); // C++ GetMaxHP/GetMaxMP; current HP/MP clamped down
         w.WriteUInt32(maxHp);
@@ -516,6 +561,21 @@ public sealed partial class MapService
 
     // ---- character resolution ----
 
+    private async Task<bool> TryEnsureCharAsync(ClientSession s)
+    {
+        try { await EnsureCharAsync(s); return true; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Character load failed for {Char}; entry denied.", s.CharId);
+            s.EntryValidated = false;
+            s.IsMain = false;
+            _state.Remove(s);
+            SendCS_CONNECT_ACK(s, ConnectResult.Internal, null);
+            s.Conn.Close();
+            return false;
+        }
+    }
+
     private async Task EnsureCharAsync(ClientSession s)
     {
         if (s.Char is not null) return;
@@ -535,6 +595,7 @@ public sealed partial class MapService
         {
             try
             {
+                await RecoverPendingSavesAsync(); // previous logout must finish before a new load
                 var row = await _gameDb.LoadCharAsync(s.CharId);
                 if (row is CharLoadRow c)
                 {
@@ -563,39 +624,56 @@ public sealed partial class MapService
                 }
                 else
                 {
-                    _log.LogWarning("Char {Char} not found in TCHARTABLE; using defaults.", s.CharId);
+                    throw new InvalidDataException($"Character {s.CharId} is unavailable.");
                 }
 
                 await TryLoadInventoryAsync(ch);
-                try { (ch.OriCountry, ch.AidCountry, ch.AidDate) = await _gameDb.LoadAidAsync(ch.CharId); }   // CTBLChar / CTBLAidTable
-                catch (Exception ex) { _log.LogWarning(ex, "Char {Char} aid country load failed.", ch.CharId); }
-                try { LoadDuringItems(ch, await _gameDb.LoadDuringItemsAsync(ch.CharId, s.UserId, LocalDay(UnixNow()))); }
-                catch (Exception ex) { _log.LogWarning(ex, "Char {Char} premium / exp item load failed.", ch.CharId); }
-                await LoadPetsAsync(s, ch);
-                await LoadCompanionsAsync(ch);
-
-                // C++ clamps the persisted current HP/MP DOWN to the computed max at load (no refill), so the
-                // in-memory value is never over-max (matters once regen/damage/save read it). Charts-gated.
-                if (_templates.HasStats)
-                {
-                    ch.Hp = Math.Min(ch.Hp, StatEngine.MaxHp(ch, _templates));
-                    ch.Mp = Math.Min(ch.Mp, StatEngine.MaxMp(ch, _templates));
-                }
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Char {Char} DB load failed; using defaults.", s.CharId);
+                _log.LogWarning(ex, "Char {Char} DB load failed; denying entry.", s.CharId);
+                throw;
             }
         }
 
+        // Every persisted part must load before this object can become playable or be saved back.
+        await LoadRequiredAuxiliaryAsync(s, ch);
+        // Preserve the existing DB-backed current-HP/MP clamp after companion/premium bonuses load.
+        if (_gameDb is not null && _templates.HasStats)
+        {
+            ch.Hp = Math.Min(ch.Hp, StatEngine.MaxHp(ch, _templates));
+            ch.Mp = Math.Min(ch.Mp, StatEngine.MaxMp(ch, _templates));
+        }
+
+        // Publish the character only after all required quest rows are available. A transient SQL
+        // failure must not turn saved completions into an empty log and permit another reward turn-in.
+        if (QuestProgressStore is { } quests)
+        {
+            var (headers, terms) = await quests.LoadQuestsAsync(ch.CharId);
+            LoadQuestProgress(ch, headers, terms);
+        }
         s.Char = ch;
     }
+
+    private async Task<bool> ValidateEntryAsync(MapEntry entry, bool enter)
+    {
+        if (_entryStore is null) return false;
+        try { return enter ? await _entryStore.EnterAsync(entry) : await _entryStore.ValidateAsync(entry); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Entry validation unavailable for character {Char}.", entry.CharId);
+            return false;
+        }
+    }
+
+    private static string EntryIp(uint ip) => new System.Net.IPAddress(
+        new byte[] { (byte)ip, (byte)(ip >> 8), (byte)(ip >> 16), (byte)(ip >> 24) }).ToString();
 
     /// <summary>
     /// Loads the character's inventory containers + items, learned/maintained skills and hotkey pages
     /// (CTBLInven/CTBLItem/CTBLSkill/CTBLSkillMaintain/CTBLHotKey), building the in-memory model the
-    /// CS_CHARINFO_ACK / CS_ENTER_ACK sub-loops serialize. Best-effort — any failure leaves the char with
-    /// whatever loaded so far. Only <c>STORAGE_INVEN</c> (0) items land in the inventory containers; the
+    /// CS_CHARINFO_ACK / CS_ENTER_ACK sub-loops serialize. Failures abort admission before the
+    /// partially loaded character can be published or saved back. Only <c>STORAGE_INVEN</c> (0) items land in the inventory containers; the
     /// backpack (0xFF) and equipped (0xFE) containers always exist.
     /// </summary>
     private async Task TryLoadInventoryAsync(Character ch)
@@ -605,11 +683,11 @@ public sealed partial class MapService
         // Containers: seed backpack + equipped, add the loaded bags, then bucket items by storage id.
         var byId = new Dictionary<byte, Inven>
         {
-            [Proto.InvenDefault] = new Inven { InvenId = Proto.InvenDefault },
-            [Proto.InvenEquip] = new Inven { InvenId = Proto.InvenEquip },
+            [Proto.InvenDefault] = Inven.FromTemplate(Proto.InvenDefault, 0, _templates),
+            [Proto.InvenEquip] = Inven.FromTemplate(Proto.InvenEquip, 0, _templates),
         };
         foreach (var b in await _gameDb.LoadInvensAsync(ch.CharId))
-            byId[b.InvenId] = new Inven { InvenId = b.InvenId, TemplateId = b.TemplateId, EndTime = b.EndTime, Eld = b.Eld };
+            byId[b.InvenId] = Inven.FromTemplate(b.InvenId, b.TemplateId, _templates, b.EndTime, b.Eld);
 
         // Cabinet open-state headers BEFORE items (C++ OnDM_LOADCHAR_ACK applies bCabinetID/bUse first, so the
         // per-item GetCabinet(m_bItemID) lands in an existing record).
@@ -633,7 +711,7 @@ public sealed partial class MapService
             else
             {
                 byte id = (byte)row.StorageId;
-                if (!byId.TryGetValue(id, out var inv)) { inv = new Inven { InvenId = id }; byId[id] = inv; }
+                if (!byId.TryGetValue(id, out var inv)) { inv = Inven.FromTemplate(id, 0, _templates); byId[id] = inv; }
                 inv.Items.Add(item);
             }
         }
@@ -649,9 +727,6 @@ public sealed partial class MapService
         (ch.MonthPvPoint, ch.MonthWin, ch.MonthLose, ch.MonthRankOrder, ch.MonthRankPercent)
             = (pvp.MonthPoint, pvp.MonthWin, pvp.MonthLose, pvp.MonthRankOrder, pvp.MonthRankPercent);
         foreach (var (id, selected) in await _gameDb.LoadTitlesAsync(ch.CharId)) ch.Titles[id] = selected;   // CTBLTitle
-        try { LoadSavedRecalls(ch, await _gameDb.LoadRecallsAsync(ch.CharId)); }                          // CTBLRecallMon / Maintain
-        catch (Exception ex) { _log.LogWarning(ex, "Char {Char} summon load failed; continuing without them.", ch.CharId); }
-
         foreach (var sk in await _gameDb.LoadSkillsAsync(ch.CharId))
             if (!IsGuildSkill(sk.SkillId))                                     // those come from the guild's tables
             ch.Skills.Add(new Skill
@@ -675,32 +750,7 @@ public sealed partial class MapService
             ch.MaintainSkills.Add(buff);
         }
 
-        try
-        {
-            foreach (var hk in await _gameDb.LoadHotkeysAsync(ch.CharId))
-            {
-                var page = new HotkeyPage { InvenKey = hk.InvenKey };
-                for (int i = 0; i < HotkeyPage.SlotCount && i < hk.Slots.Length; i++)
-                    page.Slots[i] = new HotkeySlot(hk.Slots[i].Type, hk.Slots[i].Id);
-                ch.HotkeyPages.Add(page);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Char {Char} hotkey load failed; continuing without hotkeys.", ch.CharId);
-        }
 
-        // Quest progress (C++ char-enter quest load): rebuild m_mapQUEST from the saved rows — the read-back
-        // counterpart of the Phase-25 quest save, so accepted quests survive relog. Best-effort.
-        try
-        {
-            var (qRows, qTerms) = await _gameDb.LoadQuestsAsync(ch.CharId);
-            LoadQuestProgress(ch, qRows, qTerms);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Char {Char} quest-progress load failed; continuing without quests.", ch.CharId);
-        }
     }
 
     /// <summary>

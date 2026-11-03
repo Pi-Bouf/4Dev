@@ -1,5 +1,414 @@
 # TMapSvr → TMapSvr.Net — Port Status
 
+2026-10-31 documented Gor content repairs: migrations 055/056 align 32 recipes, add recipe 10634,
+repair nine aligned reward lists and two Corneus missions, and restore the canonical wake-up mission
+7307/9720. The old completion-triggered switch action is retained under internal ID 40007307.
+Existing recipe eligibility, caps and saved player state are preserved. Fifteen plus thirteen SQL
+import scenarios and 44 plus two SQL-loaded execution/reload cases pass; live template reload verifies
+49 target definitions. No production .NET code or spawn/drop rules changed. Reference objective and
+reward differences in the 139-root Gor audit each fall to three. Thirty-four mission roots remain
+absent. The user explicitly declined reconstructed rules for the 14 initial training missions;
+these stay inactive, and ticket mission 11080 is correctly separated from training. Remaining
+unknown populations, event rules and reward-2188 server metadata are not invented. Full trial/client
+and Gameforge parity remain unverified. Evidence: `Gameforge/gor-content-repairs.json`.
+
+2026-10-31 follow-up under the user's explicit reconstruction exception: migration 054 restores
+the five remaining missions 1082/1084/1203/1208/3209 and repeatable seal producer 3210. Six populations
+use pinned target coordinates with the approved count 1, 60-second delay and no wandering. Arena
+rows 1/2 opt into full 3/5-player teams and best-of-three PvP (two round wins), with type-28 credit
+only on a completed winning result. Default RT_POINT adds exactly 100/150 spendable points and uses
+the existing PvP packet/checkpoint/native persistence; honour, monthly points and bonus formulas are
+preserved. Legacy arena rows without the flag retain their earlier behavior. Six incompatible old
+helpers are quarantined without saved target progress. Sixteen SQL import and five native
+quest/inventory lifecycle cases pass; 1,868 Map.Server regressions pass. Full save process checks
+also cover point reward persistence. New Year event 291 remains disabled. These approved population
+and arena choices do not certify Gameforge PvE waves or complete Gor parity; real-client journeys
+remain pending. Current deployment and detailed evidence: `Gameforge/gor-remaining-quests.json`.
+
+Earlier migration 053: default RT_SOUL rewards now add the pinned integer amount
+to the existing soul bar and send its existing EXP/full-bar packets. Prevalidation, capacity checks,
+unknown reward rejection, checkpointing and prior EXP-to-soul behavior are retained; unverified
+nondefault soul methods still reject. Soul is session state, while completion eligibility persists
+in SQL. Migration 053 restores Trojstranny pakt (547/548, minimum 90, Bily sokol -> Randaygaron) and
+quarantines one incompatible legacy dependent (3200), with no saved target progress. A type-28 arena
+objective now stays incomplete instead of falling through as metadata. Eleven new actor cases,
+1,853 full Map.Server cases, ten migration cases and four native quest-store lifecycle scenarios
+pass. The rebuilt Map image and SQL are deployed and registered; saved player quest/term hashes are
+unchanged. Its then-missing world/arena dependencies are addressed by the explicit reconstruction
+in migration 054 above. Actual client acceptance remains pending. See
+`Gameforge/gor-remaining-quests.json` and its dependency evidence.
+
+2026-10-31 publisher Gor quest research: all 134 current Tebekut catalogue entries and 140 total
+detail pages are captured from the official site. Six enabled event givers are independently
+confirmed, and the Ragoen seal-producing mission 3210 is documented. Quest 1208's completion text
+promises 100 achievement points versus pinned 150; quest 8893's published giver is 22919 versus
+pinned start 26302. Neither conflict changes the current SQL definitions. Six parser regressions
+pass. This research adds evidence; the seven requested missions still need compatible runtime
+contracts. See `Gameforge/gor-publisher-quests.json` and the linked per-quest publisher report.
+
+2026-10-31 requested activation of thirteen disabled Gor missions: migration 052 restores six
+missions (233–237 at Elyssa, 2398 at Pivař) and six completion actions from pinned quest text,
+objectives and rewards. Existing repeat caps are retained. Six new actor cases, thirteen focused
+actor cases in total and nine isolated SQL scenarios pass. SQL is deployed and Map restarted and
+registered; unrelated static charts and saved character quests/terms are unchanged. Seven missions
+remain disabled because reward, arena or upstream item-production contracts are missing. Event-item
+acquisition and real-client playthrough are unverified. See `Gameforge/gor-quest-activation.json`.
+
+2026-10-31 Gor/Tebekut focus: 139 reference/catalogue roots (83 missions, 56 recipes) and 448 SQL NPC
+actions were enumerated before migration 052. That audit identified 35 missing roots, 13 disabled missions and incompatible
+graphs/rewards, including 15 missing early training missions. Four Gor completion NPCs were fixed
+by 050; migration 051 also fixes the three paper-quest givers to Houba. Six scope regressions,
+seven focused actor cases (three new Gor) and seven isolated SQL checks pass. Map is restarted and
+registered; only the expected NPC fields changed. Evidence: `Gameforge/gor-quests.json` and its
+per-quest report. Complete Gor gameplay, reward contracts and actual client playthrough remain open.
+
+2026-10-31 completion NPC audit: all 1,497 SQL completion actions were compared with pinned quest and
+navigation records. Migration 050 repairs 30 compatible one-to-one NPC assignments; 797 now align.
+The 699 unresolved NPC actions and one non-NPC completion remain explicit. Twelve classifier cases,
+eight isolated SQL scenarios and the full post-deployment comparison pass. Only trigger IDs changed;
+other chart fields/rewards and observed character progress are retained. Map is restarted/registered.
+Evidence: `Gameforge/quest-turn-in-npcs.json`. Current work focuses on all Gor quests including Tebekut;
+an NPC alignment is not proof of a complete playable quest.
+
+2026-10-31 Diannina přeměna: migration 049 repairs the inherited completion NPC (8007: 20004 → Karl
+20012), matching the pinned original quest-navigation completion marker. Both saved objectives were
+already satisfied; no player progress, rewards or production .NET code changes. Four quest-specific
+actor cases, 45 focused quest/checkpoint cases and five isolated SQL migration checks pass. Current
+deployment and the pending real-client/reward reconciliation are in `Gameforge/dianna-quest-turn-in.json`.
+
+2026-10-31 explicitly requested custom welcome mail: only characters created after activation are
+eligible, once at their first playable main entry. SQL stores enrollment, the frozen payload and
+dispatch status; existing durable mail transport/receipts prevent replay from creating another letter.
+The chosen gift is 5 small life + 5 small mana potions (8001/8101). Fourteen focused regressions and
+nine new isolated SQL/process scenarios pass, including immediate process death after real CONREADY
+and repeated recovery. Migration 048 starts disabled; activate after the Map deployment using
+`Database/enable-welcome-mail.sql`. Exact deployment/client status: `Gameforge/welcome-mail.json`.
+This scoped user exception does not change the baseline priority or certify publisher rewards.
+
+2026-10-31 SQL player exchanges: both complete post-trade character/inventory snapshots and pending
+item operations now share one version-4 `TCharacterSaveQueue` record before either client's success.
+Native saves replay in order; a partial SQL failure retains the pair and blocks fresh admission until
+both finish. There is no filesystem journal or fallback. Trade partners bind to character ID/session
+key; loading/secondary/other-map/channel/store partners reject, and disconnect shares teleport teardown.
+History review preserves prior item/capacity/block-list/tournament/cast and quest checkpoint fixes.
+All 1,815 Map-server tests (25 new exchange/availability cases) and 78 isolated native/framework SQL
+scenarios pass, including six new real-dispatch/fresh-process exchange checks. Combined current stack
+validation is 2,256 passing tests; previously skipped Login/Control SQL cases now also ran. The new
+Map image is deployed and registered; the SQL queue is empty. Native table updates are sequential,
+not a single cross-player SQL transaction. Distributed fencing, other exchange types, original external
+quest effects and actual client/MapWorker journey acceptance remain open. Evidence: `Gameforge/dotnet-port.json`.
+
+2026-10-31 earlier source check (superseded by the deployment above): `CS_OTHERSELF_REQ/ACK` supplies the distant owner's appearance/equipped
+items for a visible template-zero recall. Ownership, type, visibility and lifetime checks reject
+unrelated/stale requests. Doppelgangers copy only learned basic skills supported by equipment,
+preserving innate level-zero semantics and the existing cast/World creation paths. The new shared
+`Servers/Servers.Net.slnx` includes all 31 current .NET stack projects. All 1,790 Map-server tests
+pass, including 28 new cases (1,813 with protocol/data suites). The current stack has 2,220 passing
+tests and 11 SQL-gated skips on Windows .NET 10. Evidence, regression results
+and complete-stack gaps: `Gameforge/dotnet-port.json`. At this earlier check the additions were not
+deployed and Docker was unavailable. The current deployment is described above; client acceptance is pending. Older S7g entries below are historical:
+GETBLOOD and OTHERSELF are implemented, and the native CS_RESETHOST handler is a no-op.
+
+2026-10-30 inventory fix: SQL-loaded, added and tournament bags now use `bSlotCount`; explicit
+destinations cannot create hidden inventory slots. Migration 047 recovered five invisible live items
+without changing any item fields except coordinates, or altering quests/characters. All 1,785 Map
+and 220 World tests plus seven isolated SQL repair checks pass. Rebuilt Map/World are deployed.
+See `Gameforge/inventory-visible-slots.json`; real-client acceptance after the fix is pending.
+
+2026-10-30 deployment: current cumulative source is built and deployed in Docker for Login, World,
+Map, Patch and Control. Migrations 041 through 046 are applied after checksum-verified game/global
+backups. Map/World/Control registration, public TCP ports, SQL queue ownership and the deployed data
+library pass startup/read-only checks. Real-client journeys remain unverified. Deployment evidence:
+`Gameforge/deployments/2026-10-30-wolverine.json`. Earlier entries retain their historical test scopes.
+
+2026-10-30 Wolverine mail: Shared typed handlers now cover all production PostStore, quest-post and
+operator-post contracts, with World reserved mail/actor notification integration. New operator rewards
+use SQL transport; native header/money/items/permanent receipt and notification outbox share a SQL
+transaction. Existing version-3 queue letters forward unchanged identities after durable acceptance.
+Migration 046 provisions pinned Wolverine 6.59.1 storage; production auto-DDL/purge are off. Claims
+now deny failed release, rollback native money/items together, and reject deleting multiple unclaimed
+attachments. Evidence and precise remaining gameplay boundaries: `Gameforge/wolverine-mail.json`.
+Validation: 1,775 Map + 220 World tests and 72 native/framework SQL scenarios pass; the 14 framework
+scenarios also pass from published output in a runtime-only container. The earlier version-3 entry
+below records the legacy queue layer; new production letters use Wolverine and reuse native receipts.
+Deployed; a routed mail system is not proof of atomic player exchanges or complete war recovery.
+
+2026-10-30 war/server reward mail recovery: MailOperator synchronously commits a frozen version-3
+SQL queue intent before returning even an ignored Task. Migration 045 receipts make native header,
+coins, attachment writes and item-ID allocation transactional/idempotent per accepted letter. Changed
+payloads reject, collected/deleted mail cannot be reissued by replay, and missing recipients cannot
+create orphan letters. Startup checks required schema; notifications run on the actor. All 1,767
+Map tests and 58 disposable SQL scenarios pass, including 15 new unit cases and 14 SQL checks with
+separate process exits before/after delivery. Evidence: `Gameforge/operator-post-recovery.json`.
+Not deployed. This does not recover an entire war: occupation, recipient selection, points and World
+delivery still need a durable settlement identity, and active-war/client verification remains open.
+
+2026-10-30 classic territory wars: Occupation writes for forts/castles/missions/Sky Garden now wait
+on the single DB lane and apply results on the actor. SQL failures cannot produce success ownership
+acks; castle mail/stat dispatch waits for confirmed occupation. War stat/PvP rewards checkpoint to
+SQL; stat changes refresh the existing guild-info response. Ported CheckMapGuild admission/capture
+eviction and operator castle entry. Migration 044 fixes the unscoped Sky Garden SQL update and
+missing mission/garden success returns, refusing unknown SQL repairs. World applicant assignment,
+withdrawal and movement await SQL before changing slots/echoing success. All 1,752 Map and 219 World
+tests pass, including 32 new cases; 44 disposable SQL scenarios pass, including 11 new war/application
+checks. See `Gameforge/territory-wars.json` for history, evidence and remaining work. Not deployed;
+war settlement/reward recovery, active-war restart, separate BoW/BR matches and client verification
+are incomplete. This does not certify Gameforge balance or a complete war-system port.
+
+2026-10-30 SQL-only recovery: Replaced the filesystem journal with `TCharacterSaveQueue` and SQL
+ownership/identity in migration 043. Full/direct item operations, quest state and mail receipts replay
+from SQL; ordinary quest acceptance/starter items also share one queue commit. There is no file fallback,
+save directory or `map-state` mount. Evidence: `Gameforge/sql-save-queue.json`. Source and migrations
+041/042/043 are not deployed. Earlier entries describe historical validation; external world-effect
+continuations, cross-Map fencing and real-client/MapWorker restart acceptance remain open.
+
+2026-10-30 quest mail recovery: SQL outbox/issuance identity and version-2 snapshot receipts now recover
+character/mail child actions, including sibling/nested mail and uncapped same-ID retry. Initial and
+child item mutations share the corresponding WAL record; partial state cannot escape via disconnect.
+All 1,731 Map tests and 27 isolated SQL scenarios pass (6 new unit cases, 11 mail scenarios). Evidence:
+`Gameforge/quest-mail-recovery.json`. Migrations 041/042 and source are not deployed. External world
+effects remain pending/blocked; cross-Map ownership, full MapWorker restart and real-client parity
+remain acceptance requirements. QuestEngine is still partial.
+
+2026-10-30 quest checkpoints: All 1,725 Map tests pass (22 new cases). Quest mutations capture full
+progress/inventory/currency/skill/child state at their event boundary; direct quest replies wait for
+durable journal publication. Missing/spoofed/foreign-class selected rewards fail before consumption.
+Six new SQL lifecycle scenarios exercise actual dispatch and immediate process exit without logout,
+then recovery/reload in fresh processes; all ten earlier full-save checks also pass. Evidence:
+`Gameforge/quest-checkpoints.json`. Not deployed or real-client verified. RT_SOUL, TT_WARREGION,
+generic mail-child recovery and cross-Map ownership remain unresolved; QuestEngine is still partial.
+
+2026-10-30 full-save verification: Full-save integrity: migration 041 persists the three Stat* parameters discarded by the inherited
+TSaveChar and removes its private name-specific item gift/credential lookup. Journaled saves now reject
+a nonzero native return before writing auxiliary rows. Cash bonus item use consumes/queues the item
+before its cash procedure and awaits completion on the batch task. Two held-store regressions pass.
+All 1,703 Map tests pass. Ten new SQL scenarios exercise the REAL full MapService journal callback in a
+disposable SQL instance, including a killed writer, fresh-process recovery, a late companion failure,
+all character/inventory/global timed-item stages and replay without duplicate rows. Migration 041 is
+idempotent. See `Gameforge/full-save-integrity.json`. Migration/source are NOT deployed; full MapWorker
+restart, real-client logout/relog, distributed ownership and atomic cash exchange remain open.
+
+2026-10-30 auxiliary character admission: Required auxiliary character loading now rejects database failures before a playable/saveable
+character is published. Companion selection/medals, owned pets/saddle, saved recalls/buffs, hotkeys,
+allegiance and premium/EXP items no longer silently become empty on a failed read. Valid empty state,
+existing chart filtering, timed-item rules and the optional PC-bang fallback remain. Incomplete saved
+pages/companion arrays are refused. Validation: all 1,701 Map tests (17 new cases) and 36 isolated SQL
+scenarios (12 new character-state checks) pass, including native companion/pet insert/update and fresh
+connection reload. See `Gameforge/character-admission.json`. Full character/global save recovery,
+real-client/restart and distributed ownership verification remain open. Not deployed.
+
+2026-10-30 quest admission: Quest admission now requires a complete saved quest log. Read failures close and unregister the
+session on both client/world entry paths; queued handshake packets cannot finish rejected entry.
+A valid empty log still permits a new character. Headers and objective counters load in one serializable
+SQL transaction, preventing a concurrent save from mixing versions. Saved completions, running counters
+and failed timers are reconstructed before character packets. Validation: 1,684 Map tests (8 new),
+17 quest SQL scenarios (4 new) and 7 separate-process save-recovery checks pass. Evidence and history:
+`Gameforge/quest-admission.json`. The existing 35 SendPost charts have no exec-quest children; general
+child-event recovery stays open. Full real-client/server-restart acceptance remains pending. Not deployed.
+
+2026-10-30 save recovery: Character-save recovery now journals full snapshots and incremental inventory/cabinet item writes
+before clearing dirty state. Failed SQL work stays in FIFO order across process restarts; startup and
+character reload wait for recovery. Hotkey replacements are transactional and safe to replay. The
+single DB lane, ID-seed/main/DB-loaded gates, arena/meeting exits and prior quest fixes are preserved;
+shutdown also excludes temporary tournament characters. Evidence: `Gameforge/quest-save-recovery.json`.
+Separate-process SQL tests cover quest/item/hotkey recovery; full native character/global/pet/companion
+round trips, full game-server restart and real-client acceptance remain open. Cross-Map owner fencing
+is required before using recovery across independently writing Map servers. This source is not deployed.
+
+2026-10-30 quest events: successful corpse/lottery acquisitions now refresh GETITEM objectives and fire
+their native acquisition triggers; take-all cannot bypass a pending lottery. Destruction refreshes counts
+without acquisition events. Server-owned expiry, repeat-save countdown persistence, failed zero-time
+reloads and remaining-time login packets close timer gaps. Late/loading loot recipients are refused.
+All 1,662 Map tests, including 36 new regressions, and thirteen isolated SQL scenarios pass. World source
+unchanged (207 last full suite). Evidence and preserved history: `Gameforge/quest-events.json`.
+Source is not deployed; complete real-client and actual server-restart verification remain open.
+
+Quest continuation: SendPost issuance and its completed counter now commit together, using the existing
+TQUESTTABLE and the configured CountMax. SQL row/range locks protect concurrent Map issuers; loaded
+completed entries suppress replay, and stale memory synchronizes without running children again.
+All 19 level-mail caps remain 1; all 16 war-region caps remain 0. Independent conquest reward mail is
+unchanged. GiveSkill reuses the C# level-zero reward fix; abandoning type-21 progress now clears it.
+Validation: 18 new cases, 1,626 Map tests and twelve isolated SQL scenarios pass. World source unchanged
+(last full suite: 207). Original-event crash recovery for child chains and reference gaps remain open.
+See `Gameforge/quest-engine.json`. Not deployed.
+
+Quest follow-up: all declared subtypes now dispatch, including SendPost. Map reserves every reward stack
+in one transaction; World delivers durable reservations once per minute, including offline recipients,
+retaining item properties and chart text. Existing C# reward/crafting/NPC fixes remain. Position,
+level-up and map-exit events are wired; country/drop/quest-EXP rules, local party-once Regen, type-21
+spawn proximity, carried Regen coordinates, cycle protection and atomic quest persistence are covered.
+Validation: 1,608 Map + 207 World cases; 43 new regressions and eight isolated SQL scenarios pass.
+Details and explicit remaining gaps: `Gameforge/quest-engine.json`. RT_SOUL, TT_WARREGION, durable
+original-event issuance/retry and real-client/restart acceptance remain incomplete. Source is not deployed.
+Older phase notes below describe their historical implementation state.
+
+Nearby secondary party copies now send their base monster EXP share and hunt event through World to
+the current main Map route. They do not mutate local EXP/quests. The receiving main checks key/state,
+reuses the existing level-cap/overflow/heal/soul-bar logic and passes the carried quest event through.
+Native remote shares keep their own bonus policy; the local main-only bonus/soulmate branch is retained.
+Monster `wKind` is now loaded for local/routed hunt objectives, using the kill position. A live read-only
+loader check matches 3,707 rows, including 920 kinds differing from model IDs. Validation: 19 new cases,
+1,568 Map + 204 World tests and six preservation checks pass. See `Gameforge/monster-reward-relay.json`.
+This source is not deployed; real distributed topology/client/persistence verification remains pending.
+
+TMS reopening now retains native invitation set semantics, correlates each answer with a pending
+server-owned message and current target main/key, and reports missing/disconnected peers to the sender.
+Leaving or logging out cancels pending requests; Map loading/secondary sessions cannot originate or
+approve them. Rosters remain representable by their existing byte count (255 allowed, overflow refused
+atomically). The prior C# per-recipient roster and logout fixes are preserved. Validation: 28 new TMS
+cases, 1,550 Map + 203 World tests and five focused preservation checks pass on Linux .NET 10.
+Evidence: `Gameforge/tms-recovery.json`. This source slice is not deployed or verified in the real client.
+
+Ordinary-map chat now has both Map and World routing: near, local/remote whisper, party, guild,
+tactics, corps, map/show, operator alias and World announcements. World selects current recipients
+from authoritative membership and sends `MW_CHAT_REQ`, instead of echoing the original ACK. Map retains
+block lists, bans and spoof rejection; local whisper echoes the recipient name and applies faction/aid
+rules. Near chat includes native meeting-room and Broa exceptions. Operator display and alias delivery
+use `TOPERATORTABLE`, loaded at World startup. Validation: 1,537 Map + 188 World tests, including 69 new
+cases versus the deployed baseline; the operator loader also matches two live SQL IDs read-only.
+Evidence: `Gameforge/chat-routing.json`. This source slice is not deployed. Real-client/locale checks
+and chat restrictions on the separately unimplemented BoW/BR match servers remain pending.
+
+The current priority is a complete playable Gameforge baseline before custom gameplay changes. The
+[readiness checklist](../../Gameforge/baseline-readiness.json) separates implementation, reference evidence,
+database persistence and real-client verification. The baseline remains incomplete.
+
+The [2026-10-28 deployment](../../Gameforge/deployments/2026-10-28-baseline.json) records the current
+committed runtime: all five Docker services rebuilt without cache and running, migration 040 applied,
+and a read-only probe of the deployed loader against live SQL. The client Release build is in `Game/`.
+Map passes 1,492 tests and World 164. Across all five solutions 1,838 pass; five unchanged Control
+local-process tests reproduce earlier Linux failures. Source-validation notes below describe their
+original snapshots; their uncommitted/undeployed flags are historical. Real-client gameplay is pending.
+
+Monster HP recovery now proportionally reduces every personal/party and guild damage bucket, truncating
+each result as the inherited `CTMonster::Recover` does. Full recovery removes the remaining credit; an
+eligible HP-recovery pass releases the keeper at `maxHP - floor(maxHP * 10 / 100)`. A new attacker can then
+claim the monster and receive its existing EXP/loot rewards. MP-only, blocked, dead and not-yet-due HP
+passes leave this state alone. Recovery preserves aggro, host, target, loot-window locks and AI epochs.
+Monster appearance and colour notifications now use each viewer's faction and personal/party keeper;
+notifications cover claim/release, AI mode changes and fort capture, with HP/MP preceding recovery colour.
+Relevant history was reviewed before editing: initial port `34a9afe`, AI fix `3515365`, cancellation
+performance `0ca6e5e`, loot locks `7a240ad` and fort fix `6a08080`. The previous transition-only recovery
+anchors, O(1) cancellation and next-war fort reset remain. Validation: 35 new cases and 1,492 map-solution
+tests pass on Linux .NET 10; 22 earlier retained-code checks and seven focused checks pass. No existing
+assertion was removed for this slice. Evidence: `Gameforge/monster-recovery-credit.json`. Source is now
+deployed as recorded above; pinned-client gameplay and independent official-rule parity remain unverified.
+
+The targeted [C# history audit](../../Gameforge/port-history-audit.json) checks the current changes
+against 13 earlier commits, including movement/fall damage, summon combat, buffs, authentication,
+loot locks and AI cancellation. Seven complete files and 15 selected methods match HEAD. Five changed
+legacy assertion lines are documented explicitly: authenticated PC host, authoritative monster magic
+power and waiting for the World verdict during teleport. The audit found that take-all bypassed the
+new party-money/access rules; it now shares distribution and access gates while retaining the earlier
+trade/capacity/item-owner protections. Separate item/money requests also honor the trade gate.
+Nineteen new regressions pass; the Linux map solution passes 1,457 tests. History review is now required
+before changing existing .NET behaviour. This bounded review does not certify every C# fix or full parity;
+that audit was recorded before commit and deployment; the current deployment is recorded above.
+
+Weapon and ammunition requirements are implemented for ordinary player casts, loop repeats and act-item skills.
+The matching equipped weapon must have power; its ammo kind/base count come from the newly loaded existing
+`bUseItemKind/bUseItemCount` columns. Server-selected multi-hits add ammunition cost. Required skill items and
+ammunition are reserved together before any consumption, HP/MP debit or cooldown, avoiding partial losses and
+BYTE overflow. Update/delete packets use the existing incremental persistence hooks. Unsupported legacy
+infinite-ammunition IDs are not exemptions: the pinned Gameforge item catalogue contains none of 25020–25022.
+Validation passed 1,320 map-solution tests on Linux .NET 10, including 36 new gameplay cases and one new
+database-gated field check. That field check also passed separately against live SQL, read-only, for 142 templates.
+Windows blocked the rebuilt server DLL with application-control error `0x800711C7`; no host security policy was
+changed. The current deployment is recorded above; pinned-client playthroughs and actual logout/restart persistence remain unverified.
+Ordinary cast wear and active-effect prerequisites are now implemented as described below.
+
+`wPrevActiveID` gates actions, ordinary casts and act items; the original loop's `wTargetActiveID`
+gates repeats on the caster. Summons use their own effects. The required effect must be maintained and
+unexpired. Target-active effects gate landed damage, buffs and cures, through FINISHSKILL and legacy
+DEFEND. `bDuraSlot` selects the equipment worn by an accepted ordinary player cast: ranged weapon,
+both melee weapons excluding shields, one of six armor slots, or the secondary shield. The inherited
+0–2 wear roll, forced user-item exhaustion, durability packets, break/delete handling, stat refresh
+and persistence snapshots are implemented. Natural wear never destroys an indestructible 0/0 item.
+Actions, loops and impact replays do not apply ordinary cast wear. Item-option `wAutoSkill` uses its
+stored option value and ID order; only the server-rolled effect is announced and authorized at level 1.
+Validation: 46 new gameplay cases, 1,367 map-solution tests on Linux .NET 10, one separate live read-only
+SQL check on 765 skills / 27 magic-option templates, and five migration checks on connection-local temp
+tables. The pinned original client's three fields match on all 765 shared IDs except skill 201's absent
+target-active effect 200 in SQL. Migration 040 restores that one field; its frozen evidence is
+`Gameforge/normalization/skill-active-wear.json`. Migration 040 and the source changes are now deployed.
+Original-client gameplay and real logout/restart durability persistence still need verification.
+The inherited wear/proc probability is not independent evidence of official Gameforge balance.
+
+Defensive equipment wear and reactive item branches are now implemented. A landed damage skill wears
+the secondary shield on block; otherwise positive net HP loss selects one of the six native armor slots.
+It happens after CalcDamage and before OnDamage, including lethal hits. Misses, healing, attribute-zero
+rows, immunity and unblocked MP-only damage do not wear armor. The target-delete flag, durability packets,
+break/repairability rules, stat refresh and queued persistence share the ordinary cast helper. Native
+CanFight gates the rolled reaction after wear. Damage-modifier options apply DAMAGE then HP scaling at
+the incoming skill's level; mirrors forward only HP loss through World; other rolled effects are announced
+as a defender counter-skill and receive a bounded level-one authorization against the attacker.
+The original damage map remains the pre-reaction display, while HP/MP packets carry the resulting bars.
+The missing `MW_GETBLOOD_REQ` receiver now applies HP/MP lifedrain and reflection to the routed main
+player, its hosted monster or its own recall/self/companion. Key, main/map/channel/ownership and live-object
+checks prevent stale or foreign updates. Gains cap at max without overflow; reflection leaves at least
+1 HP and never re-enters Defend. A game client cannot send this World-only instruction.
+Validation: 71 new cases (32 defensive-equipment + 39 blood-return), 1,438 map-solution tests passed
+on Linux .NET 10. Source/data evidence is in `Gameforge/normalization/defensive-equipment.json`.
+Read-only live SQL inspection found no configured automatic option-skill links. The branches are tested
+with isolated templates; official assignments and probabilities are not inferred or added to live data.
+No deployment or production chart/character writes were performed during that initial validation. Original-client playthroughs and
+actual logout/restart durability persistence remain pending.
+
+Channel switching is implemented for the hosted `Map:Channels` on one map server. `CS_CHGCHANNEL_REQ`
+starts the full BEGINTELEPORT → STARTTELEPORT → TELEPORT/CONLIST → CHECKMAIN/CONRESULT → client CONREADY
+cycle so channel-specific grids and views actually change. It preserves the character, inventory, vitals,
+position and following summons. Unhosted channels, private meeting rooms, arena participants and unavailable
+World links receive `CHC_NOCHANNEL` before loading. A current-channel request is ignored. Pending moves block
+overlapping gameplay and premature ready packets; World loss closes a loading session for relog. Old cast
+budgets are cleared on leaving. `ChannelTests` adds 18 cases, and the World socket suite adds two routing cases.
+The inherited acknowledgement-only shared-map branch and multi-map-server handoff are not claimed by this
+single-server implementation. Source is deployed with channel 1; real multi-channel/pinned-client verification remains pending.
+Validation: 1,283 map-solution tests and 164 world-solution tests passed, including the 20 new channel cases.
+
+Natural HP/MP recovery now respects STOPRECOVER on players and monsters. Monster recovery also uses the
+same action-blocking gate as the inherited Recover implementation and applies HPR/MPR modifiers to its
+quarter-max recovery amounts. Player battle timeout continues while recovery is blocked; HOLD alone
+does not stop player recovery. `RecoverTests` covers blocking, expiry, resumed recovery and modifier bounds.
+This is a functional correction against the inherited implementation, not independent proof of publisher balance.
+
+The gameplay-integrity audit fixes stale personal-store offers (item identity, tradability and live quantity),
+foreign-player skill/loop casts, unpaid or replayed player impacts through both FINISHSKILL and legacy DEFEND,
+and missing-skill fallback hits. Connection-local cast budgets retain chart-defined repeats, missiles and
+linked effects. The skill loader now also reads `bRepeatCount`, `wTriggerID` and `dwActionTime`; no new SQL
+columns or packet fields are required. Act-item casts authorize their paid effects separately from learned skills.
+
+Monster attacks use the common typed HP/MP damage engine with physical/magic defence, immunities and maintained
+effects. Attack-blocking statuses gate player casts and monster attack starts. Quest magic-item and skill
+rewards are granted before consuming ingredients; invalid or unsupported selected rewards leave requirements
+intact. Party corpse money is shared by level, with rounding residue paid to the collector, and direct hunter
+loot requests enforce the same access rule as opening the corpse. `GameplayIntegrityTests` covers these fixes;
+older combat fixtures now perform the real cast-to-impact sequence. These changes do not certify full Gameforge parity.
+
+The gameplay target is now **Gameforge 5.0+**, anchored in the documented 5.0.1 rules. The
+[version audit](../../Gameforge/version-target/report.html) and [profile](../../Gameforge/target.json)
+take precedence when choosing current gameplay rules. Older port phases below describe implementation
+history, not certified 5.x parity. The publisher-team EXP curve through 140 is now deployed (035),
+including 27 corrected old thresholds and 15 new level rows. The new non-EXP/non-client-fee fields use
+the last existing level's compatibility values; they are not certified original curves.
+The wire version `0x2918` is separate from a Gameforge release number. Companion level 20 is enforced
+on both level-up and EXP-item requests; the remaining point budget and reserve-bag rules need separate work.
+Current Linux .NET 10 validation: **1,177 tests passed**, including 19 progression and six companion-cap
+cases. SQL-backed probes against deployed DLLs verify 15 level boundaries, 12 delivery quests and
+26 purchases at two new shops. World units for Anbari/Undred are routed (036), but monster populations,
+126 other missions and nine portal NPCs remain missing. See the [report](../../Gameforge/progression-140/report.html),
+[tests](../../Gameforge/progression-140/tests.json) and [deployment](../../Gameforge/progression-140/deployment.json).
+Counts in older phase notes are historical.
+
+Skill movement now executes on the landed-skill path: `SDT_STATUS_RETURN` uses the character's bound
+spawn, `RETURNPOS` uses the effect row's spawn, and `TELEPORT`/`WARP` send the legacy `CS_WARP_ACK` to
+the target's client (or the host for a forced monster warp). The client validates the landing and
+synchronizes it through its ordinary movement packet. This fixes casts that animated and started their
+cooldown without moving the character. No skill-chart values or saved return positions are changed.
+`TeleportSkillTests` cover the cast-to-return sequence, blink wire layout, dismount, explicit return,
+dead/unlearned casters, map isolation and protected monster templates. Validation passed all 1,191
+Windows .NET 10 map-server tests. A read-only SQL-backed probe using the deployed Linux DLLs also
+verified successful casts and movement packets for Return to Village (35) and Shadow Jump (437).
+
 C#/.NET 10 port of the C++/ATL `TMapSvr` (the per-map/zone game server). Byte-exact wire/DB compat with
 this repo's client + SQL baselines, mirroring the sibling `TLoginSvr.Net` / `TWorldSvr.Net` ports (same
 `.slnx` layout, `Microsoft.Data.SqlClient`, Serilog worker host, single serialized batch task, DB-free
@@ -172,7 +581,7 @@ proper enter/leave-on-move, replacing the Phase-1 whole-map broadcast.
 >   cross-map-server routing / relay handoff is not exercised.
 > - World-relayed chat **delivery** back to clients (`OnMW_CHAT_REQ`) is a no-op stub (the exact
 >   `MW_CHAT_REQ` payload layout isn't transcribed yet); local chat works end-to-end.
-> - `CS_CHGMODE` / `CS_REGION` / `CS_CHGCHANNEL` are recognized but deferred (logged no-ops).
+> - Historical Phase-1 deferrals: mode/region handlers were implemented in later phases; channel switching is now implemented as described above.
 
 ## ✅ Done (Phase 2 — character data: inventory, gear, skills, hotkeys)
 
@@ -602,7 +1011,8 @@ damage half that follows). C++ `OnCS_SKILLUSE_REQ` (CSHandler.cpp:2429).
   (`wAttackLevel`, phys/magic min-max AP, `bCP`, level, country) + the echoed target list, sent to the near
   players (`GetNeerPlayer` ≈ `NearView`, includes the caster). The follow-up `CS_DEFEND` reads this payload back.
 
-> **Fidelity notes (Phase 14):** OT_PC casters only (OT_MON/OT_RECALL/OT_SELF summon/recall objects unported ⇒
+> **Historical fidelity notes (Phase 14; superseded by later phases and the current status above):**
+> OT_PC casters only (OT_MON/OT_RECALL/OT_SELF summon/recall objects unported ⇒
 > silent return). Guards ported in the C++ order (skill-known → MP → HP → cooldown); **deferred guards** each
 > gate an unported subsystem: toggleable-recast, wrong-region, peace-zone, tournament/arena, premium-skill
 > medals, `CheckAttack` (stun/hold buffs), `CheckPrevAct`, and `UseSkillItem` (weapon/consumable). The power
@@ -790,6 +1200,12 @@ damage half that follows). C++ `OnCS_SKILLUSE_REQ` (CSHandler.cpp:2429).
   via `+0.99`, two-phase `UseMoney` check→commit around `CanPush`/`PushTItem`), then `CS_ITEMBUY_ACK`
   (SUCCESS/NOTFOUND/NEEDMONEY/CANTPUSH + the three money tiers). The portable-NPC-call block (map 0/8 +
   `IK_NPCCALL` consume) is ported (mirrors repair).
+- [x] **Quest-object pickups** — nonzero quest IDs resolve only a runnable `Routing` quest's `QTT_ITEMID`
+  from the item chart, bound to its trigger NPC and the player's map. The object needs no shop stock.
+  Ordinary stock purchases still pay gold/PvP points. Unknown quest IDs cannot bypass payment.
+  `QuestPickupTests` covers collection → objective update → turn-in/reward, repeats, prerequisites,
+  NPC/map/item/quest mismatches and inventory-capacity retry. The deployed-DLL probe for mission 8003
+  (`Byliny pro Karla`, pickup 8005, NPC 26193, item 9656) is in `Gameforge/quest-herbs/`.
 - [x] **Sell** (`OnCS_ITEMSELL_REQ`, CSHandler.cpp:6623) — the `INVEN_EQUIP` guard, `FindTItem` + count checks,
   the `m_bIsSell & ITEMTRADE_SELL` sellable gate → `CTItem::GetPrice()/4 · bCount` (`GetSellUnitPrice`,
   grade = attr-grade fallback or default level; 0 without a resolved attr — the C++ guard) → `EarnMoney` →
@@ -797,12 +1213,10 @@ damage half that follows). C++ `OnCS_SKILLUSE_REQ` (CSHandler.cpp:2429).
 - [x] **Data** — `ItemTemplate.IsSell` (`m_bIsSell`), `TemplateStore.LevelMoney` (`TLEVELCHART.dwMoney`), the
   two NPC SQL loads, and `Npc.CanTalk` (`TCONTRY_*`/`SDT_TRANS_DISGUISE_*` value-exact). 12 tests
   (`NpcShopTests.cs`): neutral-talk ACK, hostile-country no-ack, buy-charges/adds, need-money, item-not-stocked,
-  unknown-npc, quest-free-buy, sell full/partial, not-sellable, equipped-ignored, `InitNpcs` stock resolution.
+  unknown-npc, unknown-quest rejection, sell full/partial, not-sellable, equipped-ignored, `InitNpcs` stock resolution.
 
-> **Deferred (documented):** the **quest engine** (`CheckQuest`/`FindQuestTemplate`/`CanRunQuest` + the
-> `CQuest` hierarchy + quest-node graph) — talk always returns questId 0, and a client-supplied nonzero
-> `dwQuestID` on buy resolves from shop stock and **skips payment**, faithful to the C++ path when no quest
-> chart matches (the latent free-buy closes once quests gate the item list). The NPC **discount**
+> **Historical Phase-23 deferrals:** the quest engine was added in later phases; quest-object item
+> resolution is now implemented and validated as described above. The NPC **discount**
 > (`GetDiscountRate` — occupation/guild/hero data unported ⇒ rate 0), **`TNPC_PVPOINT`** PvP-point-currency
 > shops (`GetItemPvPrice`/`UsePvPoint`) + **BoW-mode** pricing (a gold NPC is assumed), the sell **price-up
 > buff** (`SDT_STATUS_PRICEUP`), the secure-code / player-store / deal(trade) / tournament guards, the item
@@ -1775,6 +2189,25 @@ The phase write-ups above stop at Phase 46; what followed is recorded in the com
   lines, item states and help messages; chat bans held on chat and comments; the map level kick-out; the control server's link
   (`ControlIp`: announcements, kicks, the monster spawn finder and actions, castle info, the monitor).
 
+- **S7d** — account security codes: create/change/disable/enable/unlock/check/remaining-lock-time; session-local unlocking,
+  shared account attempts, ten failures → 24-hour lock persisted as UTC seconds, salted PBKDF2 hashes, and the original
+  protected-action gates plus trade, cash purchases, medal items and cloaks. Migration 023 preserves legacy codes until their
+  next save and clears the plaintext then. Failed security-state reads refuse entry; failed writes close the connection.
+- **S7e** — custom-cloak list/change and guild-cloak registration. A custom change checks account and item ownership and
+  atomically changes the equipped item and spends 4,000 medals in SQL. Invalid ownership/missing item/insufficient funds
+  consume nothing. Guild changes use ordinary item persistence and broadcast the equipped appearance.
+  Medal packages consume the item and credit its medals in the same SQL transaction.
+- **S7f** — meeting-room rentals: exclusive per-channel private maps, occupied rooms filtered from NPC lists, owner-only
+  invitations through the world, 120-second single-use invitations, guest busy checks, one-hour rental expiry, and release
+  plus guest evacuation on owner exit/disconnect. The original SM timer round-trip is local to the serialized tick.
+- **Sending / allocations** — ready outbound packets coalesce up to 128 packets / 64 KiB per socket write with no intentional
+  delay; each client packet keeps its own cipher sequence. Copies and batches use ArrayPool, a slow peer is disconnected at
+  4 MiB queued, and close drains replies with a two-second deadline. PacketWriter writes encoded strings directly into its
+  buffer, exposes a non-allocating finalized span to network queues, and rejects wire-length overflow.
+- **Login bursts** — migration 024 adds username/blacklist/protection lookup indexes; authentication DB sequences are limited
+  to 100 concurrently (configurable). Character appearances use two fixed DB reads instead of two extra reads per character.
+  Reproducible isolated SQL and loopback measurements are in `Tools/ServerBenchmarks`.
+
 ## 🚧 Not yet ported — the roadmap
 
 Found by diffing the C++ `ON_RECEIVE` table (621 handlers enabled outside the BoW/BR builds) against the .NET dispatch
@@ -1782,9 +2215,6 @@ Found by diffing the C++ `ON_RECEIVE` table (621 handlers enabled outside the Bo
 
 | Batch | What | C++ handlers |
 |---|---|---|
-| S7d | **Security code** (PIN) — create, change, enable, disable, unlock, check | `CS_SC_*` |
-| S7e | **Cloaks** — custom cloak list/change, guild cloak | `CS_CUSTOMCLOAK_*`, `CS_REGGUILDCLOAK` |
-| S7f | **Meeting rooms** | `CS_/MW_/SM_MEETINGROOM` |
 | S7g | **Misc** — monster tempt/evolve, blood, magic mirror, reset host, other-self, SMS | `MW_MONTEMPT*`, `MW_GETBLOOD`, `MW_MAGICMIRROR`, `CS_RESETHOST`, `CS_OTHERSELF`, `CS_SMSSEND` |
 
 Not needed here:

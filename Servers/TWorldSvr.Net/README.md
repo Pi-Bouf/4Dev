@@ -1,5 +1,96 @@
 # TWorldSvr.Net — Phases 1–4 (BoW + BR + battle-time + tournament config)
 
+2026-10-30 deployment: current cumulative source is built and deployed in Docker for Login, World,
+Map, Patch and Control. Migrations 041 through 046 are applied after checksum-verified game/global
+backups. Map/World/Control registration, public TCP ports, SQL queue ownership and the deployed data
+library pass startup/read-only checks. Real-client journeys remain unverified. Deployment evidence:
+`Gameforge/deployments/2026-10-30-wolverine.json`. Earlier entries retain their historical test scopes.
+
+Production reserved-mail processing now invokes shared Wolverine handlers. World alone consumes
+durable mail notifications, waits for its actor inbox and routes the existing native packet by the
+recipient's current ID/name/main. New server reward outbox envelopes commit with native mail/items
+and their permanent receipt. Migration 046 provisions SQL-only framework storage; auto-DDL/purge
+are disabled in production. See `Gameforge/wolverine-mail.json`. Source/images are deployed;
+full game exchanges, distributed topology, worker/client restart and publisher parity remain unverified.
+Validation: 220 World + 1,775 Map tests and 72 distinct native/framework SQL scenarios pass, including
+process-exit recovery. All 14 framework scenarios also pass from published output without an SDK.
+
+Castle applicant assignment, withdrawal and movement now await the native SQL write before changing
+the member/mercenary slot or publishing success/counts. Twelve held/failing-store socket cases cover
+these paths; all 219 World tests pass. Eleven new native territory/application SQL scenarios pass in
+the 44-scenario disposable fixture. See `Gameforge/territory-wars.json`. Source is not deployed;
+guild-stat/result/reward crash recovery and full war/client acceptance remain incomplete.
+
+World now delivers reserved quest mail through the native SQL procedure: up to 30 reservations per
+minute, offline recipients included, with atomic attachment/header/state writes and a database lock
+between .NET consumers. Online notifications follow the current main. Three new World regressions
+and eight isolated SQL scenarios cover delivery, concurrency, rollback and quest reload; all 207 World
+and 1,608 Map tests pass. See `Gameforge/quest-engine.json`. Source is not deployed; reference and
+real-client/restart verification remain pending.
+
+The existing `MW_MONSTERDIE_ACK` main-route relay now has its missing sender/receiver in Map. A full
+EXP/hunt payload test uses two real Map-peer TCP connections and confirms delivery to the new main
+with the body intact. World passes 204 tests; Map passes 1,568. See `Gameforge/monster-reward-relay.json`.
+The source changes are not deployed or verified with real game clients.
+
+TMS reopening now binds Map replies to pending server-owned messages and current main/key/object
+identities. Duplicate invitation targets retain native set semantics; a missing/disconnected peer
+returns the localized no-receiver notice, and leave/logout cancels pending requests. The earlier C#
+roster-recipient and logout fixes remain; byte-count roster overflow is refused before mutation.
+Validation: 28 new cases, 203 World + 1,550 Map tests and five preservation checks pass. Evidence:
+`Gameforge/tms-recovery.json`. This source is not deployed or verified with the real client.
+
+Player chat now selects party/guild/tactics/corps and remote-whisper recipients from live state and
+sends `MW_CHAT_REQ` to their main Map routes. Map/show messages fan out to Map peers; Map performs
+faction/block-list filtering. Sender key/name/main route and bans are checked; group targets and
+operator display cannot be forged. The operator alias uses the `TOPERATORTABLE` roster loaded at
+startup and returns the native offline notice when no same-country operator can receive it.
+Validation: 188 World and 1,537 Map tests pass, including 69 new cases versus the deployed baseline.
+The operator loader matches two live SQL IDs read-only. The old handshake/chat test now expects the
+translated REQ rather than the original ACK echo. See `Gameforge/chat-routing.json` for history,
+integrity extensions and remaining real-client/locale and BoW/BR match-server verification.
+These source changes are not deployed.
+
+## Peer authentication
+
+The World listener requires mutual TLS before dispatching any game-server packet. Configure
+`World:PeerTls:CertificatePath` (a PFX with private key and server-auth EKU), its password through
+`World__PeerTls__CertificatePassword`, and `World:PeerTls:Peers`. Each allowlist entry has `Sha256`
+(64 hex digits of the **leaf certificate's SHA-256 fingerprint**), `Role` (`Map` or `Control`),
+and `ServerId`. Map certificates bind to the exact `MAKEWORD(serverId, 4)` identity
+(`1025` / `0x0401` for map 1); Control uses `ServerId: 0`. Peers need separate private keys and
+client-auth EKU. Empty configuration refuses startup.
+
+Example (replace the fingerprint placeholders):
+
+```json
+"PeerTls": {
+  "CertificatePath": "certificates/world.pfx",
+  "Peers": [
+    { "Sha256": "<map-1-certificate-sha256>", "Role": "Map", "ServerId": 1025 },
+    { "Sha256": "<control-certificate-sha256>", "Role": "Control", "ServerId": 0 }
+  ]
+}
+```
+
+Trust comes from explicit certificate pins; certificates need not be in the OS trust store. Dates and
+EKU are checked; clients also check the server SAN/name. TLS 1.2/1.3 protects the entire connection.
+Revoke a certificate by removing its pin and restarting the listener; this private pin-based deployment
+does not use online CRL/OCSP. Protect PFX files/passwords under the server account. Windows imports
+temporary user key containers for Schannel; Linux uses ephemeral keys.
+
+Maps must register their pinned identity before gameplay traffic. Control must register before issuing
+allowed admin commands. A Map cannot become Control or send Control-only commands; local timer/DB
+messages are refused from Maps. Two existing in-game GM/corps CT messages remain allowed for registered
+Maps. Control's event and castle commands are explicitly allowed. Violations close the connection.
+
+Configure matching clients in [Map](../TMapSvr.Net/README.md) and [Control](../TControlSvr.Net/README.md).
+Upgrade all three binaries/configurations together: legacy plaintext links are refused. Loopback tests
+cover successful traffic, role/identity violations, unknown certificates, wrong server names/pins and
+plaintext connections. Restored SQL databases and Linux execution still require deployment validation.
+
+## Earlier port history
+
 A C# (.NET 10) reimplementation of the C++/ATL `Servers/TWorldSvr` — the cluster's central **world
 hub**. **Phase 1**: infrastructure + the core map-server-connect and character enter/leave/chat flow.
 **Phase 2**: the core guild lifecycle (DB-backed) + in-memory parties. **Phase 2b**: the full guild

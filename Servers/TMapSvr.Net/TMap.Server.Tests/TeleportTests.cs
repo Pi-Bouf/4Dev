@@ -141,6 +141,7 @@ public class TeleportTests
     public async Task TheWorldRoundTrip_ReplacesThePlayerAtTheDestination()
     {
         var (h, s, c, ch) = await Setup();
+        ch.Hp = 73; // Teleporting preserves current health; it neither kills nor refills the player.
         var (other, otherClient) = await h.EnterAsync(2, 2, 2, name: "Other", x: 105, z: 100);
         c.Clear(); otherClient.Clear(); h.World.Clear();
 
@@ -150,7 +151,7 @@ public class TeleportTests
         start.WriteFloat(900); start.WriteFloat(5); start.WriteFloat(700);
         await h.Service.DispatchWorldAsync(start.ToArray());
 
-        Assert.Equal(EnterState.Granted, s.State);
+        Assert.Equal(EnterState.Entering, s.State);
         Assert.Equal(3, ch.MapId);
         Assert.Equal(900f, ch.PosX);
         Assert.True(otherClient.Has(Msg.CS_LEAVE_ACK));        // the neighbour saw it leave
@@ -182,6 +183,8 @@ public class TeleportTests
         await h.Service.DispatchClientAsync(s, MapTestHarness.ConReady());
 
         Assert.Equal(EnterState.InGame, s.State);
+        Assert.Equal(73u, ch.Hp);
+        Assert.False(c.Has(Msg.CS_DIE_ACK));
         Assert.NotNull(s.Grid);
         Assert.DoesNotContain(h.State.Neighbors(s), n => n == other);   // placed on the other map, away from it
     }

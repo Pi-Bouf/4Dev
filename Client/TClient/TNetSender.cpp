@@ -8,12 +8,27 @@
 #include "HwidManager.h" 
 #endif
 
+void CTClientWnd::SendLoginRequest()
+{
+	if( CTNationOption::MODIFY_DIRECTLOGIN && m_bDirectLogin )
+	{
+		SendCS_LOGIN_REQ(m_strID, m_strPW, m_bSiteCode);
+		return;
+	}
+
+	TFrame *pFRAME = m_TNet.FindFrame(ID_FRAME_LOGIN_NEW);
+	TComponent *pEditID = pFRAME->FindKid(ID_CTRLINST_ID);
+	TComponent *pEditPW = pFRAME->FindKid(ID_CTRLINST_PW);
+	SendCS_LOGIN_REQ(pEditID->m_strText, CTClientGame::GetSHA1String(pEditPW->m_strText));
+}
+
 void CTClientWnd::SendCS_LOGIN_REQ(CString fixedUserID, CString fixedPassword, DWORD dwSiteCode)
 {
 	CPacket vMSG;
 
 	WORD wVersion = TVERSION;
-	CString Zombie3 = 0;
+	// Only the automatic return from the map carries the previous login's one-use proof.
+	CString Zombie3 = m_bRelogin ? m_strLoginResumeToken : CString();
 	CString Zombie2 = 0;
 	CString Zombie1 = 0;
 

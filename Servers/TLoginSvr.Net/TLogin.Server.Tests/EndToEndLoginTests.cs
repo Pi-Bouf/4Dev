@@ -35,11 +35,8 @@ public class EndToEndLoginTests
             global,
             new Dictionary<byte, (GroupConfig, GameDatabase)>(),
             Nation.Us,
-            Array.Empty<VeteranRow>(),
             new Dictionary<byte, uint>(),
             new AutoPassHwidValidator(),
-            new AutoPassTwoFactorValidator(),
-            new NoOpEmailSender(),
             validateChecksum: true,
             NullLogger<LoginService>.Instance);
     }

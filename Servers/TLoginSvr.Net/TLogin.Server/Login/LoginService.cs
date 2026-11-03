@@ -15,14 +15,16 @@ namespace TLogin.Server.Login;
 public sealed class LoginService
 {
     private readonly GlobalDatabase _global;
+    private readonly ILoginAuthenticationStore _authentication;
     private readonly IReadOnlyDictionary<byte, (GroupConfig Cfg, GameDatabase Db)> _groups;
     private readonly Nation _nation;
     private readonly IHwidValidator _hwid;
-    private readonly ITwoFactorValidator _twoFactor;
-    private readonly IEmailSender _email;
-    private readonly IReadOnlyList<VeteranRow> _veteran;
+    private readonly ICharacterCreationStore? _characterCreation;
     private readonly bool _validateChecksum;
     private readonly ILogger<LoginService> _log;
+    private readonly SemaphoreSlim _loginGate;
+    private readonly EmailTwoFactorService? _twoFactor;
+    private readonly LoginResumeTokens _loginResumes = new();
 
     // Distinct registered-user count per world, used only to mark a group FULL for new players
     // (mirrors CTLoginSvrModule::m_mapCurrentUser).
@@ -32,24 +34,27 @@ public sealed class LoginService
         GlobalDatabase global,
         IReadOnlyDictionary<byte, (GroupConfig, GameDatabase)> groups,
         Nation nation,
-        IReadOnlyList<VeteranRow> veteran,
         IReadOnlyDictionary<byte, uint> currentUser,
         IHwidValidator hwid,
-        ITwoFactorValidator twoFactor,
-        IEmailSender email,
         bool validateChecksum,
-        ILogger<LoginService> log)
+        ILogger<LoginService> log,
+        int maxConcurrentLogins = 100,
+        ILoginAuthenticationStore? authentication = null,
+        EmailTwoFactorService? twoFactor = null,
+        ICharacterCreationStore? characterCreation = null)
     {
         _global = global;
+        _authentication = authentication ?? global;
+        _twoFactor = twoFactor;
         _groups = groups;
         _nation = nation;
-        _veteran = veteran;
+        _characterCreation = characterCreation;
         _currentUser = new ConcurrentDictionary<byte, uint>(currentUser);
         _hwid = hwid;
-        _twoFactor = twoFactor;
-        _email = email;
         _validateChecksum = validateChecksum;
         _log = log;
+        if (maxConcurrentLogins is < 1 or > 1024) throw new ArgumentOutOfRangeException(nameof(maxConcurrentLogins));
+        _loginGate = new SemaphoreSlim(maxConcurrentLogins, maxConcurrentLogins);
     }
 
     public ValueTask OnConnectedAsync(PacketConnection conn)
@@ -63,6 +68,8 @@ public sealed class LoginService
         var st = (LoginSessionState)conn.State!;
         try
         {
+            if (!st.LoggedIn && r.Id is not (Msg.CS_LOGIN_REQ or Msg.CS_TESTVERSION_REQ or Msg.CS_VETERAN_REQ
+                or Msg.CS_SECURITYCONFIRM_ACK)) return;
             switch (r.Id)
             {
                 case Msg.CS_LOGIN_REQ: await OnLoginAsync(conn, st, r); break;
@@ -83,8 +90,19 @@ public sealed class LoginService
                     break;
             }
         }
+        catch (OperationCanceledException) when (conn.StoppingToken.IsCancellationRequested) { /* host/connection stopping */ }
         catch (Exception ex)
         {
+            if (r.Id == Msg.CS_LOGIN_REQ)
+            {
+                st.ResetAuthentication();
+                SendLoginAck(conn, st, LoginResult.Internal, null);
+            }
+            else if (r.Id == Msg.CS_SECURITYCONFIRM_ACK)
+            {
+                st.TwoFactor = null;
+                SendSecurityResult(conn, SecurityCode.Incorrect);
+            }
             _log.LogError(ex, "Handler for 0x{Id:X4} failed (user '{User}').", r.Id, st.UserName);
         }
     }
@@ -95,6 +113,9 @@ public sealed class LoginService
 
     private async Task OnLoginAsync(PacketConnection conn, LoginSessionState st, PacketReader r)
     {
+        // A failed second attempt must not retain the first account's authenticated session.
+        var priorVerification = st.TwoFactor;
+        st.ResetAuthentication();
         ushort version = r.ReadUInt16();
         if (version != Proto.ClientVersion)
         {
@@ -102,8 +123,8 @@ public sealed class LoginService
             return;
         }
 
-        _ = r.ReadString();                    // Zombie3
-        st.Password = r.ReadString();
+        string resumeToken = r.ReadString();   // Zombie3: optional proof for return from the map
+        string password = r.ReadString();
         _ = r.ReadString();                    // Zombie1
         _ = r.ReadString();                    // Zombie2
         st.UserName = r.ReadString();
@@ -112,7 +133,7 @@ public sealed class LoginService
         byte channeling = 0;
         if (_nation == Nation.Japan) channeling = r.ReadByte();
 
-        if (st.UserName.Length > Proto.MaxName || st.Password.Length > Proto.MaxName)
+        if (st.UserName.Length > Proto.MaxName || password.Length > Proto.MaxName)
         {
             SendLoginAck(conn, st, LoginResult.Internal, default);
             return;
@@ -133,37 +154,81 @@ public sealed class LoginService
             return;
         }
 
-        int ipCheck = await _global.CheckIpAsync(ip);
-        if (ipCheck == (int)LoginResult.Block)
+        var token = conn.StoppingToken;
+        int ipCheck;
+        uint firstFactorUser = 0;
+        bool requiresTwoFactor = false;
+        await _loginGate.WaitAsync(token);
+        try
         {
-            SendLoginAck(conn, st, LoginResult.Block, default);
-            return;
+            ipCheck = await _authentication.CheckIpAsync(ip, token);
+            if (ipCheck == (int)LoginResult.Block)
+            {
+                SendLoginAck(conn, st, LoginResult.Block, default);
+                return;
+            }
+            if (_twoFactor is not null)
+            {
+                firstFactorUser = await _authentication.ValidateCredentialsAsync(st.UserName, password, token);
+                if (firstFactorUser != 0)
+                    requiresTwoFactor = await _twoFactor.IsRequiredAsync(firstFactorUser, token);
+            }
+        }
+        finally { _loginGate.Release(); }
+
+        bool secondFactorCompleted = false;
+        if (requiresTwoFactor)
+        {
+            secondFactorCompleted = priorVerification is { Verified: true }
+                && priorVerification.Matches(firstFactorUser, st.ConnectionId, password)
+                && await _twoFactor!.ConsumeAsync(priorVerification.Challenge, token);
+            if (!secondFactorCompleted)
+                secondFactorCompleted = _loginResumes.TryConsume(firstFactorUser, password, ip, resumeToken);
+            if (!secondFactorCompleted)
+            {
+                await BeginEmailChallengeAsync(conn, st, firstFactorUser, password, token);
+                return;
+            }
         }
 
-        st.CheckKey = unchecked(((long)(uint)Random.Shared.Next() << 32) | (uint)Random.Shared.Next());
-
-        LoginRow login = _nation == Nation.Japan
-            ? await _global.LoginJpAsync(st.UserName, st.Password, ip, (byte)ipCheck, channeling)
-            : await _global.LoginAsync(st.UserName, st.Password, ip, (byte)ipCheck);
-
-        // Re-login recovery: returning from in-game to character-select (and re-entering) reconnects and
-        // re-runs TLogin, which still finds this account's TCURRENTUSER lock and returns Duplicate. Since
-        // it's the same account reconnecting, kick the stale lock and retry once (single-world semantics).
-        if ((LoginResult)login.Ret == LoginResult.Duplicate && login.UserId != 0)
+        LoginRow login;
+        await _loginGate.WaitAsync(token);
+        try
         {
-            await _global.ReleaseCurrentUserAsync(login.UserId);
+            st.CheckKey = BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(sizeof(long)));
             login = _nation == Nation.Japan
-                ? await _global.LoginJpAsync(st.UserName, st.Password, ip, (byte)ipCheck, channeling)
-                : await _global.LoginAsync(st.UserName, st.Password, ip, (byte)ipCheck);
+                ? await _authentication.LoginJpAsync(st.UserName, password, ip, (byte)ipCheck, channeling, token)
+                : await _authentication.LoginAsync(st.UserName, password, ip, (byte)ipCheck, token);
+
+            // Preserve return-to-character-select recovery, but never remove another account's
+            // current login merely because TLogin returned Duplicate before checking its password.
+            if ((LoginResult)login.Ret == LoginResult.Duplicate && login.UserId != 0
+                && await _authentication.CheckPasswordAsync(login.UserId, password, token) == 0)
+            {
+                await _authentication.ReleaseCurrentUserAsync(login.UserId, token);
+                login = _nation == Nation.Japan
+                    ? await _authentication.LoginJpAsync(st.UserName, password, ip, (byte)ipCheck, channeling, token)
+                    : await _authentication.LoginAsync(st.UserName, password, ip, (byte)ipCheck, token);
+            }
         }
+        finally { _loginGate.Release(); }
 
         var result = (LoginResult)login.Ret;
 
-        // 2FA is wired but auto-passing: a Security result on a trusted device becomes Success.
-        if (result == LoginResult.Security && _twoFactor.IsTrusted(st.UserName, hwid, st.MacAddress, ""))
-            result = LoginResult.Success;
+        if (secondFactorCompleted && login.UserId != firstFactorUser)
+        { SendLoginAck(conn, st, LoginResult.Internal, null); return; }
+        // Recheck policy before exposing a map key, including accounts enabled during this login.
+        if (_twoFactor is not null && !secondFactorCompleted && login.UserId != 0
+            && result is LoginResult.Success or LoginResult.NeedAgreement
+            && await _twoFactor.IsRequiredAsync(login.UserId, token))
+        {
+            await BeginEmailChallengeAsync(conn, st, login.UserId, password, token);
+            return;
+        }
 
-        SendLoginAck(conn, st, result, login);
+        string nextResumeToken = secondFactorCompleted && result is LoginResult.Success or LoginResult.NeedAgreement
+            ? _loginResumes.Issue(login.UserId, password, ip) : "";
+        SendLoginAck(conn, st, result, login, nextResumeToken);
 
         switch (result)
         {
@@ -187,8 +252,11 @@ public sealed class LoginService
         st.CreateCount = login.CreateCnt;
     }
 
-    private void SendLoginAck(PacketConnection conn, LoginSessionState st, LoginResult result, LoginRow? login)
+    private void SendLoginAck(PacketConnection conn, LoginSessionState st, LoginResult result, LoginRow? login,
+        string resumeToken = "")
     {
+        // Failed/2FA-pending logins must never disclose a usable map-login key or character address.
+        if (result is not (LoginResult.Success or LoginResult.NeedAgreement)) login = null;
         var w = new PacketWriter(Msg.CS_LOGIN_ACK);
         w.WriteByte((byte)result);
         w.WriteUInt32(login?.UserId ?? 0);
@@ -201,6 +269,11 @@ public sealed class LoginService
         w.WriteUInt32(login?.Premium ?? 0);
         w.WriteInt64(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); // dCurTime (__time64_t)
         w.WriteInt64(st.CheckKey);                               // m_dlCheckKey
+        // Preserve the legacy ban fields before the optional continuation extension.
+        w.WriteString("");                                      // reason
+        w.WriteInt64(0);                                        // duration
+        w.WriteByte(0);                                         // permanent
+        w.WriteString(login is null ? "" : resumeToken);
         conn.Send(w);
     }
 
@@ -208,6 +281,7 @@ public sealed class LoginService
 
     private async Task OnAgreementAsync(PacketConnection conn, LoginSessionState st, PacketReader r)
     {
+        if (!st.LoggedIn) return;
         st.Agreement = true;
         await _global.AgreementAsync(st.UserId);
     }
@@ -287,18 +361,7 @@ public sealed class LoginService
             bowCharId = await game.FindBowPlayerAsync(st.UserId);
             if (bowCharId == 0) bowCharId = await game.FindBrPlayerAsync(st.UserId);
 
-            chars = await game.CharListAsync(st.UserId);
-            foreach (var ch in chars)
-            {
-                ch.Items.AddRange(await game.EquippedItemsAsync(ch.CharId));
-                var guild = await game.GetGuildInfoAsync(ch.CharId);
-                if (guild is not null)
-                {
-                    ch.GuildName = guild.Name;
-                    ch.Fame = guild.Fame;
-                    ch.FameColor = guild.FameColor;
-                }
-            }
+            chars = await game.CharListWithAppearanceAsync(st.UserId);
         }
 
         var w = new PacketWriter(Msg.CS_CHARLIST_ACK);
@@ -365,7 +428,8 @@ public sealed class LoginService
         byte slot = r.ReadByte();
         byte cls = r.ReadByte();
         byte race = r.ReadByte();
-        byte country = r.ReadByte();
+        _ = r.ReadByte(); // Legacy clients may request an already chosen faction.
+        const byte country = 4; // Neutral starting country; faction selection happens during progression.
         byte sex = r.ReadByte();
         byte hair = r.ReadByte();
         byte face = r.ReadByte();
@@ -373,7 +437,7 @@ public sealed class LoginService
         byte pants = r.ReadByte();
         byte hand = r.ReadByte();
         byte foot = r.ReadByte();
-        byte levelOption = r.ReadByte();
+        _ = r.ReadByte(); // Consume the private-server veteran option without granting a boosted start.
 
         if (groupId != st.GroupId) return; // C++ returns EC_SESSION_INVALIDCHAR silently
 
@@ -399,15 +463,11 @@ public sealed class LoginService
             return;
         }
 
-        byte level = 0;
-        foreach (var v in _veteran)
-            if (v.Option == levelOption) level = v.Level;
-
         CreateCharRow row;
         try
         {
-            row = await g.Db.CreateCharAsync(new CreateCharArgs(name, st.UserId, groupId, slot, cls, race,
-                country, sex, hair, face, body, pants, hand, foot, levelOption));
+            row = await (_characterCreation ?? g.Db).CreateCharAsync(new CreateCharArgs(name, st.UserId, groupId, slot, cls, race,
+                country, sex, hair, face, body, pants, hand, foot, 0), conn.StoppingToken);
         }
         catch (Exception ex)
         {
@@ -424,7 +484,7 @@ public sealed class LoginService
                 _currentUser.AddOrUpdate(groupId, 1, (_, v) => v + 1);
         }
 
-        Ack((CreateResult)row.Ret, row.CharId, row.CreateCnt, level);
+        Ack((CreateResult)row.Ret, row.CharId, row.CreateCnt, row.Ret == 0 ? (byte)1 : (byte)0);
         _log.LogInformation("CreateChar '{Name}' by user {User} => ret={Ret} charId={Char}", name, st.UserId, row.Ret, row.CharId);
     }
 
@@ -566,14 +626,14 @@ public sealed class LoginService
         conn.Send(w);
     }
 
-    private void OnVeteran(PacketConnection conn)
+    private static void OnVeteran(PacketConnection conn)
     {
-        byte L(int i) => i < _veteran.Count ? _veteran[i].Level : (byte)0;
+        // Compatibility reply for older clients: only the ordinary level-one start is available.
         var w = new PacketWriter(Msg.CS_VETERAN_ACK);
-        w.WriteByte(3);          // option = 3 (all tiers available)
-        w.WriteByte(L(0));
-        w.WriteByte(L(1));
-        w.WriteByte(L(2));
+        w.WriteByte(0);
+        w.WriteByte(1);
+        w.WriteByte(0);
+        w.WriteByte(0);
         conn.Send(w);
     }
 
@@ -585,19 +645,29 @@ public sealed class LoginService
     private async Task OnSecurityConfirmAsync(PacketConnection conn, LoginSessionState st, PacketReader r)
     {
         string code = r.ReadString();
-        if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(st.SecurityCode) || st.UserId == 0)
-            return;
-
-        if (string.Equals(code, st.SecurityCode, StringComparison.OrdinalIgnoreCase))
-        {
-            await _global.AddMacAddressAsync(st.UserId, st.MacAddress);
-            SendSecurityResult(conn, SecurityCode.Correct);
-            st.SecurityCode = "";
-        }
-        else
+        if (_twoFactor is null || st.TwoFactor is not { Verified: false } pending || st.LoggedIn
+            || pending.Challenge.SessionId != st.ConnectionId)
         {
             SendSecurityResult(conn, SecurityCode.Incorrect);
+            return;
         }
+        if (await _twoFactor.VerifyAsync(pending.Challenge, code, conn.StoppingToken))
+        {
+            pending.Verified = true;
+            // The existing client reacts by resending CS_LOGIN_REQ on this same connection.
+            SendSecurityResult(conn, SecurityCode.Correct);
+        }
+        else SendSecurityResult(conn, SecurityCode.Incorrect);
+    }
+
+    private async Task BeginEmailChallengeAsync(PacketConnection conn, LoginSessionState st, uint userId,
+        string password, CancellationToken ct)
+    {
+        var challenge = await _twoFactor!.BeginAsync(userId, st.ConnectionId, ct);
+        if (challenge is null) { SendLoginAck(conn, st, LoginResult.Internal, null); return; }
+        st.TwoFactor = new PendingEmailVerification(challenge, password);
+        // LR_SECURITY would make this client close its socket. Only send its existing prompt.
+        conn.Send(new PacketWriter(Msg.CS_SECURITYCONFIRM_REQ));
     }
 
     private static void SendSecurityResult(PacketConnection conn, SecurityCode code)

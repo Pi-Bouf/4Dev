@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using TMap.Protocol;
 
@@ -16,25 +15,28 @@ namespace TMap.Server.Net;
 public sealed class ClientConnection : IClientChannel, IAsyncDisposable
 {
     private readonly Socket _socket;
+    private readonly Stream? _stream;
     private readonly ILogger _logger;
     private readonly SessionCipher _cipher = new();
     private readonly PacketFramer _framer = new();
-    private readonly Channel<byte[]> _sendQueue =
-        Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly PacketSendQueue _sendQueue = new();
     private readonly CancellationTokenSource _cts = new();
 
     private Func<ClientConnection, byte[], ValueTask>? _onPacket;
     private Task? _sendLoop;
     private int _closed;
 
-    public ClientConnection(Socket socket, ILogger logger)
+    public ClientConnection(Socket socket, ILogger logger, Stream? stream = null, bool authenticatedControl = false)
     {
         _socket = socket;
+        _stream = stream;
+        IsAuthenticatedControl = authenticatedControl;
         _logger = logger;
         RemoteEndPoint = socket.RemoteEndPoint as IPEndPoint;
     }
 
     public IPEndPoint? RemoteEndPoint { get; }
+    public bool IsAuthenticatedControl { get; }
 
     /// <summary>Per-connection game state (a <c>ClientSession</c>).</summary>
     public object? State { get; set; }
@@ -48,8 +50,21 @@ public sealed class ClientConnection : IClientChannel, IAsyncDisposable
     /// <summary>Queues a copy: the send loop encrypts in place with this connection's own sequence number, and a
     /// broadcast hands the same array to every viewer — encrypting it once per viewer corrupted every copy but one
     /// (the C++ builds a <c>CPacket</c> per session).</summary>
-    public void Send(byte[] packet) => _sendQueue.Writer.TryWrite((byte[])packet.Clone());
-    public void Send(PacketWriter writer) => _sendQueue.Writer.TryWrite(writer.ToArray());
+    public void Send(byte[] packet) => Enqueue(packet);
+    public void Send(PacketWriter writer) => Enqueue(writer.AsSpan());
+
+    public long SendCalls => _sendQueue.SendCalls;
+    public long SentPackets => _sendQueue.SentPackets;
+
+    private void Enqueue(ReadOnlySpan<byte> packet)
+    {
+        if (Volatile.Read(ref _closed) != 0) return;
+        if (!_sendQueue.TryEnqueue(packet))
+        {
+            _logger.LogWarning("Dropping slow client {Endpoint}: outbound queue limit exceeded.", RemoteEndPoint);
+            _cts.Cancel();
+        }
+    }
 
     /// <summary>Requests an orderly close of this connection (drains the send queue first).</summary>
     public void Close() => _ = DisposeAsync();
@@ -77,10 +92,12 @@ public sealed class ClientConnection : IClientChannel, IAsyncDisposable
             int n;
             try
             {
-                n = await _socket.ReceiveAsync(buffer, SocketFlags.None, token);
+                n = _stream is null ? await _socket.ReceiveAsync(buffer, SocketFlags.None, token)
+                    : await _stream.ReadAsync(buffer, token);
             }
             catch (OperationCanceledException) { break; }
             catch (SocketException) { break; }
+            catch (IOException) { break; }
             catch (ObjectDisposedException) { break; }
 
             if (n == 0) break; // peer closed
@@ -113,31 +130,31 @@ public sealed class ClientConnection : IClientChannel, IAsyncDisposable
     {
         try
         {
-            await foreach (var packet in _sendQueue.Reader.ReadAllAsync(token))
-            {
-                _cipher.EncryptOutbound(packet, packet.Length);
-                int sent = 0;
-                while (sent < packet.Length)
-                    sent += await _socket.SendAsync(packet.AsMemory(sent), SocketFlags.None, token);
-            }
+            await _sendQueue.RunAsync(_socket, _cipher, token, _stream);
         }
         catch (OperationCanceledException) { /* shutting down */ }
         catch (SocketException) { /* peer gone */ }
         catch (ObjectDisposedException) { /* socket disposed */ }
+        catch (IOException) { /* peer closed */ }
+        finally { try { _cts.Cancel(); } catch (ObjectDisposedException) { } }
     }
 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0) return;
 
-        _sendQueue.Writer.TryComplete();
-        _cts.Cancel();
+        _sendQueue.Complete();
         if (_sendLoop is not null)
         {
-            try { await _sendLoop; } catch { /* ignore */ }
+            try { await _sendLoop.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (TimeoutException) { _cts.Cancel(); }
+            catch { /* peer gone */ }
         }
-
+        _cts.Cancel();
+        if (_sendLoop is not null) { try { await _sendLoop; } catch { /* peer gone */ } }
+        else _sendQueue.Drain();
         try { _socket.Shutdown(SocketShutdown.Both); } catch { /* already closed */ }
+        if (_stream is not null) await _stream.DisposeAsync();
         _socket.Dispose();
         _cts.Dispose();
     }

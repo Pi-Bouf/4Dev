@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using TMap.Data;
 using TMap.Protocol;
 
@@ -23,9 +24,8 @@ namespace TMap.Server.Map;
 /// <para>Faithful, flagged: a request with <c>wNpcID = 0</c> skips the NPC, price and item checks and goes
 /// straight to the portal's spawn point — the C++ behaves the same.</para>
 ///
-/// <para><b>Not ported:</b> meeting rooms (the room lock is never released by anything ported, so taking it
-/// would lock it for good — the gate only refuses a room already marked used), tournament lounges, duels, pet
-/// riding, the occupation discount (always 0), <c>TT_LEAVEMAP</c> quest triggers, and the second-server
+/// <para>Meeting-room reservations and release are in MapService.MeetingRooms.cs.
+/// <c>TT_LEAVEMAP</c> quest triggers run before taking the destination. Not ported: the second-server
 /// variant of the chain (<c>ROUTELIST</c>/<c>ADDCONNECT</c>/<c>RELEASEMAIN</c>).</para>
 /// </summary>
 public sealed partial class MapService
@@ -54,6 +54,7 @@ public sealed partial class MapService
         PortalRow? npcPortal = null;
         uint price = 0;
         bool bet = false;                                                                        // C++ bTournamentBat
+        bool meeting = false;
         var consume = new List<ushort>();
 
         if (npcId != 0)
@@ -85,7 +86,12 @@ public sealed partial class MapService
 
             foreach (var cond in dest.Conditions)
             {
-                if (cond.Type == PctMeeting && cond.Id != 0) { SendCS_TELEPORT_ACK(s, TprUsed, ch.MapId, 0, 0, 0); return; }
+                if (cond.Type == PctMeeting)
+                {
+                    if (cond.Id != 0 || MeetingDestinationBusy(s.Channel, npcPortal.PortalId, portalId, s.CharId))
+                    { SendCS_TELEPORT_ACK(s, TprUsed, ch.MapId, 0, 0, 0); return; }
+                    meeting = true;
+                }
                 if (cond.Type == PctTournamentLounge) bet = true;
                 if (cond.Type == PctHaveItem)
                 {
@@ -102,6 +108,11 @@ public sealed partial class MapService
 
         ushort spawnId = portalId != 0 && _templates.Portals.TryGetValue(portalId, out var target) ? target.SpawnId : (ushort)0;
         ushort fromMap = ch.MapId;
+
+        // An unpriced client request must not bypass the room reservation through wNpcID=0.
+        if (spawnId != 0 && _templates.SpawnPositions.TryGetValue(spawnId, out var destination)
+            && IsSmallMeetingRoom(destination.MapId) && (!meeting || OwnedMeetingRoom(s) is not null))
+        { SendCS_TELEPORT_ACK(s, TprUsed, ch.MapId, 0, 0, 0); return; }
 
         if (spawnId != 0 && Teleport(s, ch, spawnId))
         {
@@ -123,6 +134,8 @@ public sealed partial class MapService
                 ch.Persist.LastDestination = (uint)(npcPortal.PortalId | (portalId << 16));   // MAKELONG(portal, dest)
             }
             foreach (var itemId in consume) UseItemByTemplate(s, ch, itemId, 1);
+            if (meeting && npcPortal is not null && _templates.SpawnPositions.TryGetValue(spawnId, out var roomSpawn))
+                ReserveMeetingRoom(s, npcPortal.PortalId, portalId, roomSpawn.MapId);
         }
         else
         {
@@ -138,6 +151,9 @@ public sealed partial class MapService
     /// <summary>C++ <c>Teleport(pPlayer, bChannel, wMapID, x, y, z)</c> (TMapSvr.cpp:7189).</summary>
     private bool Teleport(ClientSession s, Character ch, byte channel, ushort mapId, float x, float y, float z)
     {
+        if (s.TeleportPending) return false;
+        _log.LogInformation("Teleport char {Char}: HP {Hp}/{MaxHp}, from {FromMap} ({FromX},{FromY},{FromZ}) to {ToMap} ({ToX},{ToY},{ToZ}).",
+            ch.CharId, ch.Hp, MaxHpFor(ch), ch.MapId, ch.PosX, ch.PosY, ch.PosZ, mapId, x, y, z);
         PetRiding(s, ch, 0);
         for (int i = ch.MaintainSkills.Count - 1; i >= 0; i--)
             if (Array.IndexOf(TeleportClearedSkills, ch.MaintainSkills[i].SkillId) >= 0) EraseMaintainPlayer(s, ch, i);
@@ -152,6 +168,7 @@ public sealed partial class MapService
         }
 
         LeaveDuel(ch, loses: true);                                                     // teleporting away forfeits
+        s.TeleportPending = true;
         var w = new PacketWriter(Msg.MW_BEGINTELEPORT_ACK);
         w.WriteUInt32(ch.CharId); w.WriteUInt32(s.Key); w.WriteByte(0 /* bSameChannel */); w.WriteByte(channel);
         w.WriteUInt16(mapId); w.WriteFloat(x); w.WriteFloat(y); w.WriteFloat(z);
@@ -174,18 +191,16 @@ public sealed partial class MapService
         if (FindPlayer(charId, key) is not { Char: { } ch } s) return;
 
         ExitMap(s, ch);
+        s.TeleportPending = true;
+        s.State = EnterState.Entering; // wait for the world's new CONRESULT before accepting client CONREADY
         s.Channel = channel;
         ch.MapId = mapId;
         ch.PosX = x; ch.PosY = y; ch.PosZ = z;
+        _log.LogInformation("Teleport char {Char} left map: HP {Hp}/{MaxHp}, destination {Map}.", charId, ch.Hp, MaxHpFor(ch), mapId);
 
         if (!s.IsMain) return;
         // TGetServerID: the server owning that map unit. This deployment runs one map server, which owns them all.
-        byte serverId = OwnsMap(mapId) ? _opt.ServerId : InvalidServerId;
-        if (serverId == InvalidServerId)
-        {
-            SendCS_TELEPORT_ACK(s, TprNoDestination, ch.MapId, 0, 0, 0);
-            return;
-        }
+        byte serverId = HostsChannel(channel) && OwnsMap(mapId) ? _opt.ServerId : InvalidServerId;
         var w = new PacketWriter(Msg.MW_TELEPORT_ACK);
         w.WriteUInt32(charId); w.WriteUInt32(key); w.WriteByte(serverId);
         _world.Send(w);
@@ -201,6 +216,8 @@ public sealed partial class MapService
         float x = r.ReadFloat(), y = r.ReadFloat(), z = r.ReadFloat();
         byte result = r.ReadByte();
         if (FindPlayer(charId, key) is not { } s) return;
+        if (s.Char is { } ch)
+            _log.LogInformation("Teleport char {Char} verdict {Result}: HP {Hp}/{MaxHp}, destination {Map}.", charId, result, ch.Hp, MaxHpFor(ch), mapId);
         SendCS_TELEPORT_ACK(s, result, mapId, x, y, z);
     }
 
@@ -209,11 +226,11 @@ public sealed partial class MapService
     private void OnMW_CONLIST_REQ(PacketReader r)
     {
         uint charId = r.ReadUInt32(), key = r.ReadUInt32();
-        r.ReadByte(); ushort mapId = r.ReadUInt16();                    // bChannel, wMapID; position follows
+        byte channel = r.ReadByte(); ushort mapId = r.ReadUInt16();    // position follows
 
         var w = new PacketWriter(Msg.MW_CONLIST_ACK);
         w.WriteUInt32(charId); w.WriteUInt32(key);
-        if (OwnsMap(mapId)) { w.WriteByte(1); w.WriteByte(_opt.ServerId); }
+        if (HostsChannel(channel) && OwnsMap(mapId)) { w.WriteByte(1); w.WriteByte(_opt.ServerId); }
         else w.WriteByte(0);
         _world.Send(w);
     }
@@ -229,18 +246,12 @@ public sealed partial class MapService
     /// until the new <c>CS_CONREADY_REQ</c>.</summary>
     private void ExitMap(ClientSession s, Character ch)
     {
-        if (s.Deal.Status != (byte)DealStatus.Ready)
-        {
-            SendCS_DEALITEMEND_ACK(s, DealResult.NoTarget, ch.Name);
-            if (FindByName(s.Deal.TargetName) is { } partner && partner.Deal.TargetName == ch.Name)
-            {
-                SendCS_DEALITEMEND_ACK(partner, DealResult.NoTarget, ch.Name);   // the world's DEALITEMERROR relay
-                partner.Deal.Clear();
-            }
-            s.Deal.Clear();
-        }
+        CancelDealOnLeave(s);
 
         if (s.State != EnterState.InGame) return;
+
+        s.PendingCasts.Clear(); // impacts from the old world must not become valid after switching back
+        ReleaseMeetingRoom(s);
 
         EraseZoneEffects(s, ch);               // C++ ExitMAP → EraseMissionSkill (MapService.Mission.cs)
         ArenaLeave(s, ch); ArenaDequeue(ch.CharId);   // and ArenaLeave + the queue (MapService.Arena.cs)
@@ -264,6 +275,7 @@ public sealed partial class MapService
         _state.LeaveWorld(s);
         s.State = EnterState.Granted;
         foreach (var m in watching) MonsterLostSight(m, s.CharId);
+        if (s.IsMain) CheckQuest(s, 0, ch.PosX, ch.PosY, ch.PosZ, ch.MapId, QttMapId, 11 /*TT_LEAVEMAP*/, 1);
     }
 
     /// <summary>C++ <c>SendCS_TELEPORT_ACK</c> (CSSender.cpp:3864) — <c>bResult · dwID · bType · dwRange · wMapID ·

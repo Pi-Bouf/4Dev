@@ -50,7 +50,10 @@ enc_temp_folder/
 *.tmp_proj
 
 # ----- .NET build output (restore/build regenerate it) -----
+**/process-state/
 **/obj/
+# Game object packs are assets; Windows also matches OBJ against obj above.
+!/Game/Data/OBJ/
 **/bin/
 !/Lib/3rdParty/**/bin/
 
@@ -75,6 +78,7 @@ enc_temp_folder/
 # ----- Runtime logs & crash dumps -----
 *.dmp
 *.log
+/Game/Img/
 /Servers/Services/Logs/
 /Servers/Servicesd/Logs/
 
@@ -84,6 +88,7 @@ enc_temp_folder/
 /Servers/Servicesd/Configurations/*.ini
 *.env
 .env
+/.runtime/
 
 # ----- SQL Server data files & DB baselines (large binaries; obtained externally) -----
 *.mdf
@@ -92,6 +97,8 @@ enc_temp_folder/
 /TGAME_RAGEZONE.bak
 
 # ----- OS / misc junk -----
+__pycache__/
+*.py[cod]
 Thumbs.db
 ehthumbs.db
 Desktop.ini

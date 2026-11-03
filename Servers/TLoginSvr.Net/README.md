@@ -1,11 +1,85 @@
 # TLoginSvr.Net
 
+New characters follow the neutral level-one progression. The client creates directly without the
+private-server veteran dialog. The server consumes legacy level/faction selections but passes neutral
+country `4` and level option `0` to `TCreateChar`, then acknowledges level `1` on success. Legacy
+`CS_VETERAN_REQ` receives an ordinary-start-only response. Existing characters are unaffected.
+This removes boosted creation; the remaining legacy database gifts, quest and gameplay data are not
+claimed to match Gameforge until independently verified against the selected reference.
+
 A C# (.NET 10) reimplementation of the C++/ATL `Servers/TLoginSvr` login server, **protocol- and
 DB-compatible with this repo's (Araz-4ever) client and SQL baselines**. It compiles to a console `.exe`
 and runs in Docker — no Windows-only dependencies, no ATL/registry, no ODBC DSNs.
 
 It replaces the IOCP/ATL service with async sockets + the .NET Generic Host, and the ODBC layer with
 `Microsoft.Data.SqlClient`. The two existing databases and their stored procedures are used unchanged.
+
+## Email two-factor authentication
+
+Email OTPs use the existing client dialog and encrypted packet layouts. The server checks the password
+without creating a game session, reserves a challenge, delivers the code through SMTP, then sends
+`CS_SECURITYCONFIRM_REQ`. It never sends a pending `CS_LOGIN_ACK(LR_SECURITY)`, because this client would
+close the socket on that response. After a correct code, `CS_SECURITYRESULT_ACK(CODE_CORRECT)` makes the
+client repeat `CS_LOGIN_REQ`; a one-use grant bound to that connection, account and password permits the
+normal `TLogin` flow. Agreement results and duplicate-login recovery retain their normal checks.
+
+Returning from the map to character selection uses a one-use 256-bit continuation token instead of
+another email code. The updated client keeps it in memory and sends it in the reserved `Zombie3` login
+field only during its automatic return. The server binds it to the account, password and client IP,
+checks credentials and restrictions again, then rotates it on a successful return. Normal logins still
+require the email code. Tokens expire after 24 hours, are replaced by the next successful verification,
+and are lost when Login restarts; an expired/invalid token or an older client requires a new code.
+`CS_LOGIN_ACK` carries the optional token after the legacy ban fields. Deploy both client and Login.
+
+Apply **`Database/migrations/025_login_email_two_factor.sql` before starting the new Login binary**.
+The migration adds `TLOGIN2FA` and administrative `TLoginTwoFactorConfigure`; it does not change `TLogin`
+or enroll existing accounts. A missing schema fails startup before session cleanup/listening. Missing
+SMTP, database errors or delivery failures never bypass 2FA. Unenrolled accounts keep their normal login;
+custom legacy procedures returning `LR_SECURITY` remain denied rather than being silently promoted.
+
+Configure `Login:TwoFactor:Smtp` in deployment configuration:
+
+| Key | Example / default |
+|---|---|
+| `Host` | Your SMTP server; empty disables delivery |
+| `Port` | `587` |
+| `Encryption` | `StartTls` (mandatory STARTTLS) or `SslOnConnect` (usually port 465) |
+| `From` | A verified sender address |
+| `UserName` | SMTP username; empty only for a TLS relay that does not require authentication |
+| `Password` | Supply through `Login__TwoFactor__Smtp__Password`, never commit credentials |
+| `TimeoutSeconds` | `20`, including admission/connection/delivery; shorter than the code lifetime |
+
+MailKit 4.18.2 sends over TLS 1.2/1.3 using normal certificate/name validation. There is no plaintext or
+accept-any-certificate configuration. At most four deliveries run concurrently, outside the authentication
+DB admission gate. The only recipient is the enrolled database address, never a client-supplied address.
+
+After independently verifying the account owner's address, a database administrator can enroll it:
+
+```sql
+USE [TGlobal_gsp];
+EXEC dbo.TLoginTwoFactorConfigure
+    @dwUserID = 123,
+    @szEmail = N'owner@example.com',
+    @bEnabled = 1;
+```
+
+This is administrative enrollment/recovery, not a public self-service endpoint. Use the same procedure
+to replace a verified address or disable the policy with `@bEnabled = 0`; it invalidates outstanding codes
+and unconsumed grants. Do not change recipient columns directly. No MAC, IP address or empty device
+identifier is saved as a trusted device. Each new login connection requires its own verification.
+
+Defaults under `Login:TwoFactor`: a cryptographically generated six-digit code lives **300 seconds**;
+resends require **60 seconds**, with at most **10 per hour/account**; **5 wrong attempts** lock the account
+for **900 seconds**. The verified relogin grant lives **60 seconds**. Codes are stored only as salted
+SHA-256 digests, consumed once and replaced on resend. Deadlines, attempts, locks and send limits use
+SQL Server's clock and survive Login restarts and parallel connections. OTP values and SMTP error text
+are not logged. Email OTP preserves the legacy flow; it is not phishing-resistant MFA.
+
+Tests exercise the complete encrypted client flow and a real local SMTP server with STARTTLS and implicit
+TLS, including certificate rejection and missing STARTTLS. Set `TLOGIN_2FA_TEST_ADMIN` to an SQL admin
+connection to run isolated SQL concurrency, expiry, lockout, resend, grant and enrollment-revocation tests.
+They create their own `CodexLogin2FA_<guid>` database, apply migration 025 twice and remove only that test
+database. They never use player rows; these tests do not replace restored-baseline or production SMTP validation.
 
 ## Why "compatible with *this* repo"
 
@@ -85,6 +159,7 @@ Server, then run it.
 | Key | Env | Default | Notes |
 |---|---|---|---|
 | `Port` | `Login__Port` | 4816 | TCP listen port |
+| `MaxConcurrentLogins` | `Login__MaxConcurrentLogins` | 100 | authentication DB sequences admitted concurrently (1–1024); others wait without holding SQL connections |
 | `Db:GlobalConnectionString` | `Login__Db__GlobalConnectionString` | — | `TGlobal_gsp` (accounts/login/routing) |
 | `Db:GameConnectionStringsByDsn:<DSN>` | `Login__Db__GameConnectionStringsByDsn__<DSN>` | — | one per `TGROUP.szDSN`; the game DB(s) |
 | `ControlServerIp` | `Login__ControlServerIp` | "" | if set, that peer skips the cipher (plaintext, like the C++ control server) |
@@ -93,9 +168,22 @@ Server, then run it.
 
 ## Behaviour notes / known simplifications
 
-- **Anti-cheat (exec checksum / HWID / 2FA / email) is wired but disabled**, exactly as in the C++ build
-  (`m_hExecFile` is never loaded; the SMTP path is commented out). HWID/2FA validators auto-pass; the
-  `GetCheckFilePoint` value sent in group/channel/char lists is `0`.
+Migration `024_login_burst_indexes.sql` adds covering account-name and protection indexes and a blacklist-IP index.
+Authentication retains the existing stored procedures and READ COMMITTED isolation. Character selection loads all six
+characters' equipment and guild appearance together, removing the two per-character DB round trips. The guild-cloak
+owner id is normalized to the client registration flag in both the individual and bulk item readers.
+
+For a repeatable 400-account burst test using a disposable database, see
+[`Tools/ServerBenchmarks`](../../Tools/ServerBenchmarks/README.md). The benchmark does not read or modify player rows.
+
+- **Second-factor bypass removed:** a database `Security` result stays challenge-required; this client
+  build supplies no verifiable trusted-device identity. Failed or pending logins expose no map key,
+  character or routing data and cannot use authenticated handlers. A new login attempt clears any
+  previous account authentication. Duplicate-login recovery verifies the password before removing its
+  existing login row, and the retried login still enforces `Security`.
+- **Email second factor is implemented** through the challenge/relogin flow above. It requires migration
+  025, SMTP configuration and administrative enrollment. OpenIddict was not added.
+- Exec-checksum/HWID anti-cheat is still disabled (`m_hExecFile` is not loaded); `GetCheckFilePoint` is `0`.
 - On Ctrl+C / SIGTERM the server runs `TClearLoginCurrentUser`, mirroring the C++ `OnExit`.
 - Implemented messages: LOGIN, AGREEMENT, GROUPLIST, CHANNELLIST, CHARLIST, CREATECHAR, DELCHAR, START,
   TESTVERSION, VETERAN, SECURITYCONFIRM, TERMINATE, HOTSEND (no-op). The dev-only `TESTLOGIN` is omitted.

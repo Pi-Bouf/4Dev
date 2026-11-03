@@ -19,8 +19,9 @@ namespace TMap.Server.Map;
 /// or logs out, and when dismissed.</para>
 /// <para>The owner's remain skills may lengthen a summon's life (<c>SCT_INCLIFTTIME</c>) and allow more maintain
 /// objects (<c>MTYPE_RMC</c>); no live skill does, so these are 0 and 1. Taming (<c>SER_MONSTER</c>) lives in
-/// MapService.Tame.cs. <b>Not ported:</b> the doppelganger's equipped-skill check. The summon belongs to the
-/// skill's target in the C++; here the target must be the caster, the only case the client sends.</para>
+/// MapService.Tame.cs. A doppelganger copies only learned basic skills supported by the owner's equipment.
+/// The summon belongs to the skill's target in the C++; here the target must be the caster, the only case
+/// the client sends.</para>
 /// </summary>
 public sealed partial class MapService
 {
@@ -89,7 +90,11 @@ public sealed partial class MapService
 
             // A summon: the world allocates its id. Template 0 is the doppelganger — it copies the caster.
             bool copy = mt.Id == 0;
-            var skills = copy ? ch.Skills.Where(k => k.SkillId is >= 31 and <= 34).Select(k => k.SkillId).ToList() : mt.Skills.ToList();
+            // TObjBase.cpp:3307 selects basic skills 31..34 with IsEquipSkillItem. Keep the existing
+            // .NET learned/innate distinction: a level-zero placeholder is not a learned basic skill.
+            var skills = copy ? ch.Skills.Where(k => k.SkillId is >= 31 and <= 34 && k.Template is not null
+                    && IsLearned(k) && IsEquipSkillItem(ch, k.Template))
+                .Select(k => k.SkillId).Distinct().Order().ToList() : mt.Skills.ToList();
             var cp = CasterPower(ch, tpl);
             SendMW_CREATERECALLMON_ACK(new RecallRecord(ch.CharId, s.Key, 0, monId, attr, 0, 0, "", ch.Level,
                 copy ? ch.Class : mt.Class, copy ? ch.Race : mt.Race,
@@ -212,6 +217,15 @@ public readonly record struct AttackerPower(uint ShortMin, uint ShortMax, uint L
     public uint PysMax => IsLong ? LongMax : ShortMax;
     public uint ApMin(bool magic, bool arrow) => magic ? MgMin : arrow ? LongMin : ShortMin;
     public uint ApMax(bool magic, bool arrow) => magic ? MgMax : arrow ? LongMax : ShortMax;
+
+    public static AttackerPower Of(Monster mon, SkillTemplate? tpl)
+    {
+        bool magic = tpl?.GetAttackType() == SkillTemplate.SatMagic;
+        return new AttackerPower(mon.GetMinAp(), mon.GetMaxAp(), mon.GetMinLongAp(), mon.GetMaxLongAp(),
+            mon.GetMinMagicAp(), mon.GetMaxMagicAp(), magic ? mon.GetMagicAttackLevel() : mon.GetAttackLevel(),
+            magic ? mon.GetMagicCritProb() : mon.GetCritProb(), magic, tpl?.IsLongAttack() ?? false,
+            mon.Level, mon.Country, mon.AidCountry, 0);
+    }
 
     /// <summary>A player's figures for a skill (by the skill's attack type and range), as <c>CS_SKILLUSE</c> reports them.</summary>
     public static AttackerPower Of(Character ch, TemplateStore t, SkillTemplate? tpl)

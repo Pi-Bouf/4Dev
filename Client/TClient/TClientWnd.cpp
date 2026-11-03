@@ -294,46 +294,7 @@ void CTClientWnd::OnConnect( CTachyonSession *pSession, int nErrorCode)
 	{
 	case SVR_LOGIN	:
 		{
-			TFrame *pFRAME = m_TNet.FindFrame(ID_FRAME_LOGIN_NEW);
-
-			TComponent *pEditID = pFRAME->FindKid(ID_CTRLINST_ID);
-			TComponent *pEditPW = pFRAME->FindKid(ID_CTRLINST_PW);
-
-			CString strPW;
-
-
-			strPW = CTClientGame::GetSHA1String(pEditPW->m_strText);
-
-			if( CTNationOption::MODIFY_DIRECTLOGIN )
-			{
-				if( m_bDirectLogin )
-				{
-					//m_pTNet->m_bValidLogin = TRUE;
-
-					SendCS_LOGIN_REQ(
-						m_strID,
-						m_strPW,
-						m_bSiteCode);
-				}
-				else
-				{
-					//m_pTNet->m_bValidLogin = TRUE;
-
-					SendCS_LOGIN_REQ(
-						pEditID->m_strText,
-						strPW);
-				}
-			}
-			else
-			{
-				//m_pTNet->m_bValidLogin = TRUE;
-
-				SendCS_LOGIN_REQ(
-					pEditID->m_strText,
-					strPW );
-			}
-
-
+			SendLoginRequest();
 		}
 
 		break;
@@ -477,6 +438,7 @@ void CTClientWnd::OnClose( CTachyonSession *pSession, int nErrorCode)
 
 		if (!bRelogin)
 		{
+			m_strLoginResumeToken.Empty();
 			if (!nErrorCode)
 				OnGM_CLOSE_MSGBOX();
 
@@ -4297,7 +4259,7 @@ void CTClientWnd::InitChart()
 			{
 				pItem->SetRefineMax( pTITEM->m_bRefineMax);
 				
-				for(INT j=0; j<TMAGIC_MAX; ++j)
+				for(INT j=0; j<TQUEST_MAGIC_SLOT_COUNT; ++j)
 				{
 					if( itQUESTITEM->second->m_bMagic[ j ] )
 					{
@@ -5157,20 +5119,20 @@ BOOL CTClientWnd::VeteranBox(BYTE bOption, BYTE bFirstLevel, BYTE bSecondLevel, 
 	pLvlBtn1->ClearText();
 
 	if(bOption < 1 || bOption == NULL)
-		pLvlBtn1->m_strText.Format("Lv %d", 1);
+		pLvlBtn1->m_strText.Format(CTChart::Localize("Lv %d"), 1);
 	else
-		pLvlBtn1->m_strText.Format("Lv %d", bFirstLevel);
+		pLvlBtn1->m_strText.Format(CTChart::Localize("Lv %d"), bFirstLevel);
 
 	pLvlBtn2->ClearText();
-	pLvlBtn2->m_strText.Format("Lv %d", bSecondLevel);
+	pLvlBtn2->m_strText.Format(CTChart::Localize("Lv %d"), bSecondLevel);
 	pLvlBtn3->ClearText();
-	pLvlBtn3->m_strText.Format("Lv %d", bThirdLevel);
+	pLvlBtn3->m_strText.Format(CTChart::Localize("Lv %d"), bThirdLevel);
 	pNaLvlBtn1->ClearText();
-	pNaLvlBtn1->m_strText.Format("Lv %d", bFirstLevel);
+	pNaLvlBtn1->m_strText.Format(CTChart::Localize("Lv %d"), bFirstLevel);
 	pNaLvlBtn2->ClearText();
-	pNaLvlBtn2->m_strText.Format("Lv %d", bSecondLevel);
+	pNaLvlBtn2->m_strText.Format(CTChart::Localize("Lv %d"), bSecondLevel);
 	pNaLvlBtn3->ClearText();
-	pNaLvlBtn3->m_strText.Format("Lv %d", bThirdLevel);
+	pNaLvlBtn3->m_strText.Format(CTChart::Localize("Lv %d"), bThirdLevel);
 
 	if(bOption == 1 || bOption == 0)
 	{

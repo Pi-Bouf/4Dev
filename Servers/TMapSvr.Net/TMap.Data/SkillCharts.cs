@@ -47,7 +47,7 @@ public sealed record SkillTemplate(
     // Learning (CS_SKILLBUY): m_fPrice scales the level chart's dwMoney into the price; m_wParentSkillID is the skill
     // that must be known first (its level checked against TSKILLPOINTCHART.bPrevSkillLevel).
     float Price = 0f, ushort ParentSkillId = 0,
-    // m_dwWeapon: the weapons a self-buff needs (bit IK-1 of an equipped item's kind); 0 = none. m_wPosture: the
+    // m_dwWeapon: the weapons a cast or self-buff needs (bit IK-1 of an equipped item's kind); 0 = none. m_wPosture: the
     // stance a buff belongs to — it falls off with that stance (CTPlayer::CheckEquipSkill).
     uint WeaponId = 0, ushort Posture = 0,
     // m_bORadius: an area buff; a tie against it keeps it (UpdateBuffSkill).
@@ -58,9 +58,22 @@ public sealed record SkillTemplate(
     byte TargetHit = 1,
     // m_bCanLearn: a skill of the class's tree (the tournament character gets them all at their top level).
     byte CanLearn = 0,
-    // m_wUseItem (TSKILLCHART.wItemID): the item an act skill spends (CS_ACTITEMSUSE).
-    ushort UseItem = 0)
+    // m_wUseItem (TSKILLCHART.wItemID): one required item per ordinary/loop cast or act-item use.
+    ushort UseItem = 0,
+    byte RepeatCount = 0, ushort TriggerId = 0, uint ActionTime = 0,
+    ushort PrevActiveId = 0, ushort TargetActiveId = 0, byte DuraSlot = 0)
 {
+    /// <summary>SDT_ITEM / SDT_ITEM_DELUSER: this cast exhausts the selected equipment.</summary>
+    public bool IsItemDelUser() => Data.Any(d => d.Type == 8 && d.Exec == 1);
+
+    public bool IsItemDelTarget() => Data.Any(d => d.Type == 8 && d.Exec == 2);
+
+    /// <summary>CTSkillTemp::IsDamageType: a nonzero-attribute ability row acting on HP/MP.</summary>
+    public bool IsDamageType() => Data.Any(d => d.Type == 1 && d.Attr != 0 && d.Exec is 30 or 88 or 14 or 22);
+
+    /// <summary>SDT_STATUS_MAGICMIRROR: reflect this incoming HP loss through the World route.</summary>
+    public bool IsMirrorType() => Data.Any(d => d.Type == 6 && d.Exec == 17);
+
     /// <summary>MAGIC_TYPE MTYPE_EFC (NetCode.h): how many missiles a skill fires at once.</summary>
     public const byte MtypeEfc = 36;
 
@@ -351,6 +364,12 @@ public sealed record SkillTemplate(
 
     /// <summary>SKILL_DATA_TYPE SDT_STATUS (NetCode.h:1552) — a status-effect data row.</summary>
     public const byte SdtStatus = 6;
+    public const byte SdtStatusTeleport = 16, SdtStatusWarp = 24, SdtStatusReturn = 31, SdtStatusReturnPos = 56;
+
+    /// <summary>Instant movement effects executed when a skill lands (C++ PerformSkill SDT_STATUS).</summary>
+    public bool HasMovementStatus() => Data.Any(d => d.Type == SdtStatus
+        && d.Exec is SdtStatusTeleport or SdtStatusWarp or SdtStatusReturn or SdtStatusReturnPos);
+
     /// <summary>SDT_STATUS_TYPE HP↔MP execs (NetCode.h:1737) — swap HP↔MP, and sacrifice half HP into MP; the
     /// only vitals-mutating status effects the map server applies inline (the rest are movement / flags).</summary>
     public const byte SdtStatusHpMpChange = 50, SdtStatusHpToMp = 51;

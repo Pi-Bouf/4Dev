@@ -9,6 +9,24 @@ namespace TMap.Server.Tests;
 /// and the owner's say over its NPCs and portals.</summary>
 public class FortTests
 {
+    [Theory]
+    [InlineData(0)] [InlineData(1)] [InlineData(-1)]
+    public async Task FortResultIsAppliedOnTheActorOnlyAfterSqlConfirmation(int result)
+    {
+        var (h, a, _, _, _) = await Setup(); a.Char!.GuildId = 77;
+        var store = new HeldTerritoryStore(result) { Guild = 77 }; h.Service.TerritoryOccupationStore = store;
+        await h.Service.DispatchWorldAsync(LocalEnable(1));
+        await Kill(h, a, Live(h, GateL)!);
+        var capture = Kill(h, a, Live(h, Boss)!);
+        await store.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try { Assert.Null(h.World.Last(Msg.MW_LOCALOCCUPY_ACK)); }
+        finally { store.Release.TrySetResult(); }
+        await capture;
+        Assert.Equal(1, store.Calls); Assert.Equal(Fort, store.Territory);
+        Assert.Equal(result == 0, h.World.Last(Msg.MW_LOCALOCCUPY_ACK) is not null);
+        Assert.Equal(result == 0, h.World.Last(Msg.MW_GUILDINFO_ACK) is not null);
+    }
+
     private const ushort Fort = 1, Map = 0, MonId = 500, AttrId = 900, NpcId = 4000, Shop = 4001;
     private const ushort Boss = 25001, GateR = 25002, GateL = 25003, Guard = 25019;
     private const uint SwL = 9, SwR = 10;
@@ -72,7 +90,7 @@ public class FortTests
 
     private static async Task Kill(MapTestHarness h, ClientSession s, Monster mon)
     {
-        for (int i = 0; i < 20 && mon.Hp > 0; i++) await h.Service.DispatchClientAsync(s, MapTestHarness.DefendReq(s.CharId, mon.Id));
+        for (int i = 0; i < 20 && mon.Hp > 0; i++) await h.CastAndHitAsync(s, MapTestHarness.DefendReq(s.CharId, mon.Id));
     }
 
     private static (byte Type, ushort Id, byte Country, uint Guild, byte Cur) OccupyAck(MapTestHarness h)
@@ -121,7 +139,7 @@ public class FortTests
         await Kill(h, a, Live(h, GateL)!);
         var boss = Live(h, Boss)!;
 
-        await h.Service.DispatchClientAsync(b, MapTestHarness.DefendReq(b.CharId, boss.Id));
+        await h.CastAndHitAsync(b, MapTestHarness.DefendReq(b.CharId, boss.Id));
         await Kill(h, a, boss);
 
         Assert.Equal(((byte)1, Fort, C, 77u, D), OccupyAck(h));
@@ -156,6 +174,29 @@ public class FortTests
         var r = new PacketReader(ca.Last(Msg.CS_CHANGECOLOR_ACK)!);
         r.ReadByte(); r.ReadUInt32(); r.ReadByte();
         Assert.Equal(C, r.ReadByte());
+    }
+
+    [Fact]
+    public async Task TheCaptureColorsTheSameGuardAsAllyOrEnemyForEachViewer()
+    {
+        var (h, a, ca, _, cb) = await Setup();
+        await h.Service.DispatchWorldAsync(LocalEnable(1));
+        await Kill(h, a, Live(h, GateL)!);
+        ca.Clear(); cb.Clear();
+        await Kill(h, a, Live(h, Boss)!);
+
+        var guard = Live(h, Guard)!;
+        foreach (var (channel, expected) in new[] { (ca, (byte)0), (cb, (byte)3) })
+        {
+            var updates = channel.Sent.Where(p => PacketHeader.ReadId(p) == Msg.CS_CHANGECOLOR_ACK)
+                .Select(p =>
+                {
+                    var r = new PacketReader(p);
+                    return (Type: r.ReadByte(), Id: r.ReadUInt32(), Color: r.ReadByte(), Country: r.ReadByte());
+                }).Where(p => p.Id == guard.Id).ToArray();
+            Assert.NotEmpty(updates);
+            Assert.Equal((Monster.OtMon, guard.Id, expected, C), updates[^1]);
+        }
     }
 
     [Fact]
@@ -196,7 +237,7 @@ public class FortTests
         await h.Service.DispatchWorldAsync(LocalEnable(1));
 
         for (int i = 0; i < 5 && b.Char.Hp > 0; i++)
-            await h.Service.DispatchClientAsync(a, MapTestHarness.DefendReq(a.CharId, b.CharId, attackType: 1, targetType: 1));
+            await h.CastAndHitAsync(a, MapTestHarness.DefendReq(a.CharId, b.CharId, attackType: 1, targetType: 1));
 
         var r = new PacketReader(ca.Last(Msg.CS_PVPPOINT_ACK)!);
         Assert.Equal((14u, 14u), (r.ReadUInt32(), r.ReadUInt32()));        // 100% of 14, no death-penalty cut

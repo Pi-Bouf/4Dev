@@ -16,6 +16,7 @@ internal sealed class FakeCashStore : ICashStore
     public (int Ret, long Time, uint Cash, uint Bonus)? CabinetBuy = (0, 2_000_000_000, 800, 50);
     public (int Ret, uint NewId)? Putin = (0, 77);
     public int? Gain = 0;
+    public Func<Task<int?>>? GainHandler;
     public List<string> Log { get; } = new();
 
     public Task<int?> StopTheClockAsync(uint charId, ushort shopItemId) { Calls.Add((charId, shopItemId)); return Task.FromResult(Ret); }
@@ -28,7 +29,7 @@ internal sealed class FakeCashStore : ICashStore
     public Task<(int Ret, long Time, uint Cash, uint Bonus)?> CashCabinetBuyAsync(uint charId, ushort shopItemId)
     { Log.Add($"cabinetbuy {shopItemId}"); return Task.FromResult(CabinetBuy); }
     public Task<(int Ret, uint NewId)?> CashItemPutinAsync(uint charId, byte inven, byte slot) { Log.Add($"putin {inven} {slot}"); return Task.FromResult(Putin); }
-    public Task<int?> GainCashBonusAsync(uint charId, byte inven, byte slot, uint bonus) { Log.Add($"bonus {inven} {slot} {bonus}"); return Task.FromResult(Gain); }
+    public Task<int?> GainCashBonusAsync(uint charId, byte inven, byte slot, uint bonus) { Log.Add($"bonus {inven} {slot} {bonus}"); return GainHandler?.Invoke() ?? Task.FromResult(Gain); }
 }
 
 /// <summary>Batch S7a: fall damage, act items, medal items, the rewards window, stop the clock and waste refine.</summary>
@@ -79,13 +80,13 @@ public class ItemLeftoverTests
         return item;
     }
 
-    private static byte[] Fall(uint target, byte type, uint damage)
-        => new PacketWriter(Msg.CS_DROPDAMAGE_REQ).WriteUInt32(target).WriteByte(type).WriteUInt32(damage).WriteByte(1).WriteUInt16(0).ToArray();
+    private static byte[] Fall(uint target, byte type, uint damage, byte channel = 1, ushort mapId = 0)
+        => new PacketWriter(Msg.CS_DROPDAMAGE_REQ).WriteUInt32(target).WriteByte(type).WriteUInt32(damage).WriteByte(channel).WriteUInt16(mapId).ToArray();
 
     private static byte[] Act(uint attacker, ushort skill = Firework)
     {
         var w = new PacketWriter(Msg.CS_ACTITEMSUSE_REQ);
-        w.WriteUInt32(attacker); w.WriteByte(0); w.WriteByte(1); w.WriteUInt16(0); w.WriteUInt16(skill); w.WriteByte(1);
+        w.WriteUInt32(attacker); w.WriteByte(1); w.WriteByte(1); w.WriteUInt16(0); w.WriteUInt16(skill); w.WriteByte(1);
         w.WriteUInt32(5); w.WriteUInt32(6); w.WriteFloat(100); w.WriteFloat(0); w.WriteFloat(100); w.WriteUInt32(0); w.WriteByte(0);
         return w.ToArray();
     }
@@ -105,6 +106,36 @@ public class ItemLeftoverTests
         await x.H.Service.DispatchClientAsync(x.Sa, Fall(A, 1, 500));
         Assert.Equal(0u, x.A.Hp);
         Assert.True(x.Cb.Has(Msg.CS_DIE_ACK));
+    }
+
+    [Theory]
+    [InlineData(2, 0)]
+    [InlineData(1, 3)]
+    public async Task AFallFromThePreviousMapOrChannel_DoesNotKillAtTheDestination(byte channel, ushort mapId)
+    {
+        var x = await Open();
+        x.Ca.Clear(); x.Cb.Clear();
+
+        await x.H.Service.DispatchClientAsync(x.Sa, Fall(A, 1, 500, channel, mapId));
+
+        Assert.Equal(100u, x.A.Hp);
+        Assert.False(x.Ca.Has(Msg.CS_DROPDAMAGE_ACK));
+        Assert.False(x.Ca.Has(Msg.CS_HPMP_ACK));
+        Assert.False(x.Ca.Has(Msg.CS_DIE_ACK));
+        Assert.False(x.Cb.Has(Msg.CS_DIE_ACK));
+    }
+
+    [Fact]
+    public async Task AFallWhileLoadingTheDestination_DoesNotKill()
+    {
+        var x = await Open();
+        x.Sa.State = EnterState.Granted;
+        x.Ca.Clear();
+
+        await x.H.Service.DispatchClientAsync(x.Sa, Fall(A, 1, 500));
+
+        Assert.Equal(100u, x.A.Hp);
+        Assert.False(x.Ca.Has(Msg.CS_DIE_ACK));
     }
 
     [Fact]

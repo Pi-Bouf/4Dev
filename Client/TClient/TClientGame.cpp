@@ -1080,16 +1080,19 @@ void CTClientGame::CalcSCENE( DWORD dwTick)
 	CalcBREATH(dwTick);
 	CalcLAVA(dwTick);
 
-	if(m_pMainChar->m_dwDropDamage &&
-		(m_pMainChar->m_pTREGION ? m_pMainChar->m_pTREGION->m_bContryID != TCONTRY_PEACE : TRUE) )
+	if(m_pMainChar->m_dwDropDamage)
 	{
-		SendCS_DROPDAMAGE_REQ(
-			m_pMainChar->m_dwID,
-			m_pMainChar->m_bType,
-			m_pMainChar->m_dwDropDamage,
-			m_pMainWnd->m_bChannel,
-			m_vMAP.m_wMapID);
+		if( !m_pMainChar->m_pTREGION || m_pMainChar->m_pTREGION->m_bContryID != TCONTRY_PEACE )
+		{
+			SendCS_DROPDAMAGE_REQ(
+				m_pMainChar->m_dwID,
+				m_pMainChar->m_bType,
+				m_pMainChar->m_dwDropDamage,
+				m_pMainWnd->m_bChannel,
+				m_vMAP.m_wMapID);
+		}
 
+		// A fall in a peace region is discarded, never deferred until the player leaves it.
 		m_pMainChar->m_dwDropDamage = 0;
 	}
 
@@ -1130,7 +1133,7 @@ void CTClientGame::CalcSCENE( DWORD dwTick)
 	catch(...)
 	{
 		m_pMainWnd->MessageBoxOK(
-			"Error occured in the new skill system. Code : 0x0A, Please report this to the 4Story Team.",
+			CTChart::Localize("Error occured in the new skill system. Code : 0x0A, Please report this to the 4Story Team."),
 			TSTR_CANCEL,
 			GM_CLOSE_MSGBOX,
 			0 );
@@ -2926,7 +2929,7 @@ void CTClientGame::RenderTTEXT( CTClientObjBase *pTOBJ)
 
 
 					if(IsInBOWMap() || IsInBRMap())
-						strTITLE = "4Story";
+						strTITLE = CTChart::Localize("4Story");
 					else
 						strTITLE = pTCHAR->m_strGUILD;
 
@@ -10555,6 +10558,8 @@ int CTClientGame::OnSessionMsg( CTachyonSession *pSession, CPacket *pPacket)
 
 void CTClientGame::ReleaseForTELEPORT()
 {
+	// Pending damage belongs to the old location, including falls suppressed in Thebekut.
+	m_pMainChar->m_dwDropDamage = 0;
 	((CTClientObjBase *) m_pMainChar)->CalcTick( m_pDevice->m_pDevice, 0);
 	m_pCtrlHost = m_pMainChar;
 
@@ -14135,7 +14140,7 @@ void CTClientGame::ShotSkill( LPTSKILL pTSKILL, CTClientObjBase * pTOBJ, LPTSKIL
 	catch(...)
 	{
 		CString x;
-		x.Format("Exception occured in the Skill System. Code : 0x04 Please report this to the 4Story Team");
+		x.Format(CTChart::Localize("Exception occured in the Skill System. Code : 0x04 Please report this to the 4Story Team"));
 		m_pMainWnd->MessageBoxOK(
 			x,
 			TSTR_OK,
@@ -14411,7 +14416,7 @@ void CTClientGame::LineSHOT( CTClientObjBase *pTATTACK,
 	catch(...)
 	{
 		CString x;
-		x.Format("Exception occured in the Skill System. Code : 0x02 Please report this to the 4Story Team");
+		x.Format(CTChart::Localize("Exception occured in the Skill System. Code : 0x02 Please report this to the 4Story Team"));
 		m_pMainWnd->MessageBoxOK(
 			x,
 			TSTR_OK,
@@ -14595,7 +14600,7 @@ BOOL CTClientGame::Defend( CTClientObjBase *pTATTACK,
 	catch(...)
 	{
 		CString x;
-		x.Format("Exception occured in the Skill System. Code : 0x06 Please report this to the 4Story Team");
+		x.Format(CTChart::Localize("Exception occured in the Skill System. Code : 0x06 Please report this to the 4Story Team"));
 		m_pMainWnd->MessageBoxOK(
 			x,
 			TSTR_OK,
@@ -16973,6 +16978,7 @@ void CTClientGame::ResetNPCTalkUI()
 	CTNPCTalkDlg *pTNPCTalkDlg = (CTNPCTalkDlg *)m_vTFRAME[TFRAME_NPCDIALOG];
 	std::map<DWORD, std::vector<LPTQUEST>> mapQuest[3];
 
+	pTNPCTalkDlg->ClearQuestSelection();
 	for (BYTE i = 0; i < 3; ++i)
 	{
 		pTNPCTalkDlg->m_QuestList[i].DeleteQuestList();
@@ -20457,7 +20463,7 @@ void CTClientGame::UseTItem( BYTE bInvenID,
 			if (!pStyleDlg->InitData(pDlg->m_bCurSelSlot, pTITEM->GetCompanionID(), bInvenID, bSlotID))
 			{
 				m_pMainWnd->MessageBoxOK(
-					"The companion transform cannot be accessed.",
+					CTChart::Localize("The companion transform cannot be accessed."),
 					TSTR_OK,
 					GM_CLOSE_MSGBOX,
 					0 );
@@ -20915,7 +20921,7 @@ void CTClientGame::UseTItem( BYTE bInvenID,
 			else
 			{
 				m_pMainWnd->MessageBoxOK(
-					"You can't use this Item outside of Thebekut",
+					CTChart::Localize("You can't use this Item outside of Thebekut"),
 					TSTR_OK,
 					GM_CLOSE_MSGBOX,
 					0,
@@ -24980,7 +24986,7 @@ void CTClientGame::CheckTMINIMAP( UINT nFlags, CPoint point)
 		vTAUTOPATH.m_fPosZ = vTPOS.z;
 
 		CString test;
-		test.Format("You are walking to position %d, %d", (DWORD)vTPOS.x, (DWORD)vTPOS.z);
+		test.Format(CTChart::Localize("You are walking to position %d, %d"), (DWORD)vTPOS.x, (DWORD)vTPOS.z);
 
 		pMain->ResetPositionMsg(test);
 
@@ -28860,7 +28866,7 @@ void CTClientGame::FinishSkill(CTClientObjBase *pTATTACK,
 	catch(...)
 	{
 		CString x;
-		x.Format("Exception occured in the Skill System. Code : 0x00 Please report this to the 4Story Team");
+		x.Format(CTChart::Localize("Exception occured in the Skill System. Code : 0x00 Please report this to the 4Story Team"));
 		m_pMainWnd->MessageBoxOK(
 			x,
 			TSTR_OK,
@@ -28957,7 +28963,7 @@ void CTClientGame::AddEffectScrolls()
 	{
 		LPTITEM NewScroll = new TITEM(*Default);
 		NewScroll->m_wItemID = 24500 + i;
-		NewScroll->m_strNAME = "Formula of Transformation";
+		NewScroll->m_strNAME = CTChart::Localize("Formula of Transformation");
 		AddEffectString(i, NewScroll->m_strNAME);
 
 		CTChart::m_mapTITEMTEMP.insert(MAPTITEMTEMP::value_type(NewScroll->m_wItemID, NewScroll));

@@ -1,4 +1,288 @@
-# TMapSvr.Net — Phases 1–46 — the full port ledger lives in PORT_STATUS.md
+# TMapSvr.Net
+
+2026-10-31 user-requested welcome mail: characters created after SQL activation receive one letter at
+their first playable main-session entry, containing 5 small life potions (8001) and 5 small mana
+potions (8101). Existing characters are excluded. Migration 048, first-entry intents, Wolverine
+transport and permanent native-mail receipts keep enrollment/recovery in SQL only. Repeated ready
+packets, relog and process recovery reuse the same reward identity. Fourteen focused unit cases and
+nine new isolated SQL/process scenarios pass. This is an explicit custom reward, not Gameforge
+baseline evidence. Deployment and outstanding client verification: `Gameforge/welcome-mail.json`.
+
+2026-10-30 inventory fix: SQL-loaded, added and tournament bags now use `bSlotCount`; explicit
+destinations cannot create hidden inventory slots. Migration 047 recovered five invisible live items
+without changing any item fields except coordinates, or altering quests/characters. All 1,785 Map
+and 220 World tests plus seven isolated SQL repair checks pass. Rebuilt Map/World are deployed.
+See `Gameforge/inventory-visible-slots.json`; real-client acceptance after the fix is pending.
+
+2026-10-30 deployment: current cumulative source is built and deployed in Docker for Login, World,
+Map, Patch and Control. Migrations 041 through 046 are applied after checksum-verified game/global
+backups. Map/World/Control registration, public TCP ports, SQL queue ownership and the deployed data
+library pass startup/read-only checks. Real-client journeys remain unverified. Deployment evidence:
+`Gameforge/deployments/2026-10-30-wolverine.json`. Earlier entries retain their historical test scopes.
+
+## Current implementation
+
+All production mail stores now use the shared `FourDev.Mail` Wolverine 6.59.1 layer: player mailbox,
+bills/refunds, quest reservations/continuations and server rewards. Interactive handlers are awaited
+by the game actor. New server rewards use durable SQL transport; native letter/coins/items/receipt
+and the World notification outbox commit together. Old queued letters retain their IDs when forwarded.
+Migration 046 provisions the dedicated message/transport schemas; production disables auto-DDL and
+purging. Mail claim failures no longer grant contents, SQL release is transactional, and deletion
+rejects any unclaimed attachment count. See `Gameforge/wolverine-mail.json` and `Servers/FourDev.Mail`.
+The complete player exchange/war settlement and real-client acceptance remain separate gaps. Source is deployed as recorded above.
+Validation: 1,775 Map tests, 220 World tests and 72 distinct native/framework SQL scenarios pass.
+The 14 Wolverine scenarios also pass from published output in the runtime image without an SDK.
+
+The earlier version-3 recovery layer below is retained for pending letters and its native receipts;
+new production letters use Wolverine as described above.
+
+Server reward letters previously committed complete intents to the existing SQL queue before returning from
+MailOperator, including fire-and-forget callers. Migration 045 adds SQL receipts; header, coins,
+new attachments and receipt commit together. Replay after a process exit or after letter collection
+does not issue again. Required schema is checked before startup recovery; notifications run on the
+actor. All 1,767 Map tests and 58 disposable SQL scenarios pass (15 new cases, 14 new SQL checks).
+See `Gameforge/operator-post-recovery.json`. This protects accepted letters; a whole war result,
+all recipients, points and World delivery still need a shared durable settlement. Not deployed.
+
+Classic territory wars now wait for confirmed SQL occupation results before publishing ownership
+success; castle mail/stat rewards also wait for that result. Fort/castle writes use the existing DB
+lane and actor, and war stat/PvP changes schedule SQL character checkpoints. Saved guild destinations
+are rechecked on entry and after castle capture; registered operators retain native castle entry.
+Migration 044 repairs the Sky Garden target ID and missing mission/garden targets. Validation:
+1,752 Map tests, 219 World tests and 44 disposable SQL scenarios (11 new territory/application checks).
+See `Gameforge/territory-wars.json`. Source/migration are not deployed. Active-war restart, durable
+settlement/reward replay, separate BoW/BR matches and real-client acceptance remain incomplete.
+
+Recovery now uses SQL only. Migration 043 adds `TCharacterSaveOwner`/`TCharacterSaveQueue`; queued
+snapshots are committed before acknowledging quest changes, and replay remains on the single DB lane.
+Character/item state, sibling/nested mail intents and receipts need no filesystem journal. The Map save
+directory setting and `map-state` mount are removed. Evidence: `Gameforge/sql-save-queue.json`.
+Migrations 041/042/043 and this source are not deployed; real-client/MapWorker restart and external
+world-effect continuations remain open. The validation notes below record earlier implementation
+stages; their filesystem journal design is superseded by this SQL-only queue.
+
+Quest mail continuation recovery: migration 042 adds an atomic SQL outbox/issuance ledger. A version-2
+journal record joins character/item results, sibling/nested mail intents and receipts; admission resumes
+unfinished character/mail actions after the save-recovery barrier. SQL/file failures suppress child
+replies and prevent partial state from escaping through logout or direct saves. All 1,731 Map tests
+and 27 isolated SQL scenarios pass (6 new unit cases, 11 new mail scenarios). See
+`Gameforge/quest-mail-recovery.json`. NOT deployed: migrations 041/042 are required. World-effect
+children remain explicitly pending/blocked; cross-Map ownership and real-client acceptance remain open.
+
+Quest event checkpoints and selected reward validation are implemented. All 1,725 Map tests pass
+(22 new cases). Six new SQL lifecycle scenarios pass alongside the ten full-save checks: actual
+MapService dispatch, immediate process exit without logout, fresh-process journal recovery and SQL
+reload preserve acceptance, hunt, selected rewards, next missions, abandonment and expired timers.
+Direct quest replies wait for durable journal publication; invalid choices preserve ingredients and
+eligibility. See `Gameforge/quest-checkpoints.json`. This is not deployed or real-client verified;
+RT_SOUL, TT_WARREGION, generic mail-child recovery and cross-Map ownership remain open.
+
+Full-save integrity: migration 041 persists the three Stat* parameters discarded by the inherited
+TSaveChar and removes its private name-specific item gift/credential lookup. Journaled saves now reject
+a nonzero native return before writing auxiliary rows. Cash bonus item use consumes/queues the item
+before its cash procedure and awaits completion on the batch task. Two held-store regressions pass.
+All 1,703 Map tests pass. Ten new SQL scenarios exercise the REAL full MapService journal callback in a
+disposable SQL instance, including a killed writer, fresh-process recovery, a late companion failure,
+all character/inventory/global timed-item stages and replay without duplicate rows. Migration 041 is
+idempotent. See `Gameforge/full-save-integrity.json`. Migration/source are NOT deployed; full MapWorker
+restart, real-client logout/relog, distributed ownership and atomic cash exchange remain open.
+
+Required auxiliary character loading now rejects database failures before a playable/saveable
+character is published. Companion selection/medals, owned pets/saddle, saved recalls/buffs, hotkeys,
+allegiance and premium/EXP items no longer silently become empty on a failed read. Valid empty state,
+existing chart filtering, timed-item rules and the optional PC-bang fallback remain. Incomplete saved
+pages/companion arrays are refused. Validation: all 1,701 Map tests (17 new cases) and 36 isolated SQL
+scenarios (12 new character-state checks) pass, including native companion/pet insert/update and fresh
+connection reload. See `Gameforge/character-admission.json`. Full character/global save recovery,
+real-client/restart and distributed ownership verification remain open. Not deployed.
+
+Quest admission now requires a complete saved quest log. Read failures close and unregister the
+session on both client/world entry paths; queued handshake packets cannot finish rejected entry.
+A valid empty log still permits a new character. Headers and objective counters load in one serializable
+SQL transaction, preventing a concurrent save from mixing versions. Saved completions, running counters
+and failed timers are reconstructed before character packets. Validation: 1,684 Map tests (8 new),
+17 quest SQL scenarios (4 new) and 7 separate-process save-recovery checks pass. Evidence and history:
+`Gameforge/quest-admission.json`. The existing 35 SendPost charts have no exec-quest children; general
+child-event recovery stays open. Full real-client/server-restart acceptance remains pending. Not deployed.
+
+Character-save recovery now journals full snapshots and incremental inventory/cabinet item writes
+before clearing dirty state. Failed SQL work stays in FIFO order across process restarts; startup and
+character reload wait for recovery. Hotkey replacements are transactional and safe to replay. The
+single DB lane, ID-seed/main/DB-loaded gates, arena/meeting exits and prior quest fixes are preserved;
+shutdown also excludes temporary tournament characters. Evidence: `Gameforge/quest-save-recovery.json`.
+Separate-process SQL tests cover quest/item/hotkey recovery; full native character/global/pet/companion
+round trips, full game-server restart and real-client acceptance remain open. Cross-Map owner fencing
+is required before using recovery across independently writing Map servers. This source is not deployed.
+
+Quest acquisition events now run after successful single-item, take-all and lottery corpse transfers.
+Take-all respects pending draws; only the actual winner advances objectives. Destruction refreshes fetch
+counts without firing acquisition triggers; ordinary slot moves do not create acquisition events.
+Server timers expire without client cooperation; early/repeated notifications cannot disable deadlines.
+Repeated saves retain decaying remaining time, expired reloads stay failed and login sends the remaining
+countdown. Main/in-game checks cover loot and lottery recipients. Validation: all 1,662 Map tests pass,
+including 36 new cases, plus thirteen isolated SQL scenarios. See `Gameforge/quest-events.json`.
+World source unchanged; real-client/server-restart acceptance remains pending. Not deployed.
+
+Quest mail now persists its issuance counter in the same transaction as its attachments. The chart's
+CountMax survives reload and concurrent Map issuers; already-issued rewards do not replay their children.
+The 19 level-mail templates retain CountMax=1, and the 16 war-region templates retain CountMax=0.
+Ordinary castle/fort/mission reward mail uses its existing separate path. GiveSkill now activates a
+level-zero catalogue entry using the earlier C# reward fix; abandoning a type-21 objective resets it.
+Follow-up validation: 18 new regressions, all 1,626 Map tests and twelve isolated SQL scenarios pass.
+World source is unchanged (last full suite: 207). See `Gameforge/quest-engine.json`. Not deployed.
+
+Quest dispatch now includes SendPost with atomic reservations and World delivery, offline recipients,
+native chart text and complete item properties. Position, level-up and map-exit hooks run; country,
+quest drops, quest EXP, party-once regeneration and type-21 proximity objectives are covered. Regen
+uses carried death coordinates, cycles are bounded, and quest headers/terms save transactionally.
+Timers remain active at tick zero and after loading an expired quest; reacceptance starts a fresh timer.
+Validation: 1,608 Map + 207 World tests, including 43 new cases, plus eight isolated SQL scenarios.
+See `Gameforge/quest-engine.json` and `Tools/QuestEngineCheck`. This is not deployed. Twelve RT_SOUL
+missions, sixteen TT_WARREGION mail templates, crash/retry semantics and real-client verification
+remain open; the quest system is not certified complete.
+
+Monster rewards for nearby secondary party copies now pass through World to the player's current main;
+the shadow copy cannot change its local EXP or hunt progress. Existing local bonus/soulmate and level
+cap/overflow protections remain. Monster `wKind` groups variants into their hunt objectives for local
+and routed kills, with the monster's kill position. All 19 new cases and 1,568 Map + 204 World tests
+pass; a separate read-only live SQL test verifies 3,707 kinds, including 920 variant mappings.
+See `Gameforge/monster-reward-relay.json`. Source is not deployed; real-client/topology and persistence
+verification remain pending.
+
+TMS private-conversation reopening now checks a pending original message and the prompted peer's current
+main/key. Duplicate invitation IDs retain the original set/merge behaviour. Missing/disconnected peers
+return the localized no-receiver notice; leaving/logging out cancels pending work. Loading/secondary
+sessions cannot originate or approve it, and roster count overflow is refused atomically. All 28 new
+cases pass; Map passes 1,550 tests and World 203. See `Gameforge/tms-recovery.json`. This source is not
+deployed; real-client verification remains pending.
+
+Ordinary-map chat now routes near, whisper, party, guild, tactics, corps, map/show and operator messages
+through Map/World, including existing World event announcements. Recipients, keys and membership are
+server-derived. Faction/aid rules, meeting-room/Broa exceptions, protected lists and bans are retained;
+whisper echo identifies the recipient. Map passes 1,537 tests and World 188, with 69 new cases versus
+the deployed baseline. The operator loader also passes a live read-only SQL check. Source is not
+deployed; real-client/locale checks and separate BoW/BR match-server chat rules remain pending.
+See `Gameforge/chat-routing.json`.
+
+The current [deployment record](../../Gameforge/deployments/2026-10-28-baseline.json) contains image IDs,
+client hash, SQL verification and test results. All five Docker services were rebuilt and recreated;
+Map/World/Control peer registration succeeds and migration 040 is applied. The client Release build is
+in `Game/`. Across all five server solutions 1,838 tests pass; five unchanged Control Linux process tests
+still fail as in the earlier baseline. Real-client gameplay remains unverified.
+
+Natural monster HP recovery now reduces personal/party and guild damage credit according to the healed
+fraction of its previous HP deficit. Reaching the inherited 90% threshold releases its loot/EXP keeper,
+allowing a new attacker to claim it. Client colours reflect faction, party/private ownership and AI mode
+on appearance, ownership changes, mode changes and fort capture. Recovery keeps existing aggro, hosts,
+loot locks and AI scheduling intact. Relevant C# commits were checked before editing, retaining earlier
+AI and fort fixes. `MonsterRecoveryCreditTests` and an additional fort case add 35 regressions; all 1,492
+map-solution tests pass in the isolated Linux .NET 10 build. See `Gameforge/monster-recovery-credit.json`.
+This source is now deployed; real-client and independent Gameforge parity checks remain.
+
+Entry now checks the supplied account/character/key against `TCURRENTUSER` in the global database and
+the non-deleted character's owner in `TCHARTABLE` before loading or announcing character data. The
+world-driven main-entry step rechecks credentials and calls the original `TEnterServer` procedure. Secondary
+connections revalidate on `MW_ENTERCHAR_REQ` without replacing the main route; promotion to main runs
+`TEnterServer` even on an existing socket. Missing
+databases, rejected credentials, a failed procedure or an unavailable character deny entry. Synthetic
+characters are confined to explicitly injected test stores. The client packet layout is unchanged.
+
+Channel changes now use the world-coordinated teleport cycle on the current single-map-server deployment.
+Set `Map:Channels` to the hosted logical channels (for example `[1, 2]`); the default remains `[1]`.
+The Login server's active `TCHANNEL` rows for this group must advertise those same channels.
+The client keeps its socket, map and position, leaves the old channel's grid, and enters the new channel's
+player/monster/object view after the world grants entry. The existing character and inventory stay in memory.
+Unknown channels, private meeting rooms, arena participants and a disconnected World receive `CHC_NOCHANNEL`
+before any move starts. Selecting the current channel is a no-op. Loading blocks overlapping requests and
+gameplay until the world completes routing and the client sends `CS_CONREADY_REQ`; loss of World during
+loading closes that session through the normal disconnect/save path so it can relog. Old cast authorizations
+are discarded when leaving. No new protocol fields or SQL columns are required.
+`ChannelTests` covers the map/client cycle and `TWorld.Server.Tests/MovementTests` the real-socket World cycle.
+Shared physical maps across logical channels and handoff to a different map server remain outside this port's
+current topology; in-game verification against the pinned client is still required before deployment sign-off.
+
+Player skill casts, loop repeats and act-item skills now enforce their weapon-kind mask against the three
+equipped weapon slots and reject broken weapons. `TITEMCHART.bUseItemKind/bUseItemCount` supply the weapon's
+ammunition requirement. Each accepted cast spends its base count plus one per additional server-selected hit;
+impact/replay packets do not spend it again. The inherited search combines stacks within one inventory and
+skips an insufficient inventory without consuming it. `TSKILLCHART.wItemID` adds one required item per cast.
+All requirements are checked before committing any item, HP/MP or cooldown changes; item notifications also
+queue the existing incremental persistence. Act-item use retains its item delay and does not double-consume
+the required item. Store/trade locks block these casts. No new SQL columns or wire fields are required.
+The old source's infinite-ammunition item IDs 25020–25022 have no matching records in the pinned Gameforge
+item table and are not copied as exemptions. `SkillItemTests` covers the cast paths and inventory snapshots;
+the read-only SQL check verifies ammunition fields on 142 templates.
+
+Skills now load and enforce `wPrevActiveID` on the caster for actions, ordinary casts and act items;
+loops check the caster's `wTargetActiveID`, following the inherited loop handler. The required effect
+must be maintained and unexpired; merely learning it is insufficient. Target-active prerequisites are
+checked again when damage, a buff or a cure lands, including monster/summon defenders.
+Accepted ordinary player casts apply `bDuraSlot` equipment wear (0–2 points per selected item), send
+`CS_DURATIONDEC_ACK` / `CS_DURATIONEND_ACK`, retain repairable broken gear or delete non-repairable gear,
+refresh derived stats and queue persistence. Natural wear preserves indestructible equipment. Animation,
+loop and impact packets do not repeat this wear. `wAutoSkill` option rolls announce a weapon effect at
+level 1; only the server's selected effect receives a bounded impact authorization.
+`SkillPrerequisiteAndWearTests` adds 46 cases. The Linux map solution passes 1,367 tests; a separate live
+read-only SQL test confirms the new fields on 765 skills and 27 magic-option templates. The pinned
+client agrees with all three skill fields on the 765 shared IDs except skill 201's missing target effect
+200 in SQL. Migration `040_gameforge_skill_target_active.sql` corrects that single field and passes five
+temporary-table checks; it is now applied to the live database. Source evidence is recorded in
+`Gameforge/normalization/skill-active-wear.json`. Original-client playthroughs and real
+logout/restart persistence remain unverified; inherited wear/proc probabilities are not publisher-certified.
+
+Incoming landed damage now wears the secondary shield on a block, otherwise one native armor slot when
+net HP damage is positive. This runs after damage calculation and before HP/MP loss, including lethal
+hits, through monster, player and summon attacks. Misses, heals, immunity and unblocked MP-only damage
+do not wear armor. Selected empty slots stay empty; the selection does not fall through to another piece.
+Repair/deletion rules, durability messages, stat refresh and persistence reuse the cast-wear implementation.
+The target-delete effect can exhaust the selected gear. A hostile-side option reaction can sequentially
+adjust HP damage, reflect it through World, or announce a defender counter-skill. Only that rolled skill
+is authorized, at level 1, against its attacker; player impact replay does not repeat wear or reactions.
+The previously missing `MW_GETBLOOD_REQ` receiver now completes both HP/MP lifedrain and reflection.
+It checks the main session/key and object ownership/map/channel, does not resurrect dead objects, caps
+gains without integer overflow, and preserves at least 1 HP on reflection without recursively defending.
+`DefensiveEquipmentTests` and `BloodTests` add 71 cases; the Linux map solution passes 1,438 tests.
+A read-only SQL inspection found no configured `wAutoSkill` links. No links or probabilities were invented;
+the runtime branches are covered by isolated fixtures. Expected official assignments, inherited wear/proc
+probabilities, original-client behaviour and real logout/restart persistence still require verification.
+See `Gameforge/normalization/defensive-equipment.json` for implementation-time evidence; the current
+deployment is recorded above.
+
+Set `Map:WorldTls:CertificatePath` to this Map's client-auth PFX, supply its password through
+`Map__WorldTls__CertificatePassword`, and set `Map:WorldTls:ServerName` (matching the World certificate
+SAN) and `Map:WorldTls:ServerSha256` (64 hex fingerprint). Add this Map's certificate and exact map id
+to the [World allowlist](../TWorldSvr.Net/README.md). No plaintext World fallback exists.
+
+Direct Control access uses a **separate** `Map:ControlPort` (default `0`, disabled). When enabled, configure
+`Map:ControlTls` with a server-auth PFX and a `Peers` allowlist containing Control's client certificate,
+`Role: "Control"`, `ServerId: 0`. Its password can be set through `Map__ControlTls__CertificatePassword`.
+Point Control's configured Map service at this new port and configure its `PeerTls` client options.
+`Map:ControlIp` no longer grants privileges on the game-client port. Existing client encryption is
+unchanged. Real socket tests cover the TLS World link, the dedicated Control listener, rejection of a
+Map certificate on that listener, and the removed IP-based privilege grant.
+
+The full port ledger is in [`PORT_STATUS.md`](PORT_STATUS.md); the phase descriptions below record the earlier work.
+Cash shop and GM tools are implemented and covered by their existing tests. The follow-up includes:
+
+- Account security codes with durable salted hashes, session-local unlocks, ten-attempt/24-hour account locks,
+  and protected inventory, trade, mail, auction, guild and cash operations.
+- Custom-cloak lists and changes, atomic ownership/payment/item updates, guild-cloak registration, and atomic medal-package redemption.
+- Meeting-room rental, NPC availability, owner invitations, single-use acceptance, expiry and owner-leave cleanup.
+  Rentals are transient; saved characters return outside after a logout/restart.
+- Pooled outbound copies, bounded queues, immediate batching of up to 128 packets / 64 KiB, and allocation-free
+  string encoding into the existing packet buffer. Client packet framing, encryption and sequence numbers are unchanged.
+
+Migration `023_security_codes_and_cloaks.sql` supplies security columns and cloak/medal lookup indexes. Docker's migration
+job applies it before the servers start. `Map:Db:GlobalConnectionString` supplies the security-code database; if absent,
+the game connection's server/credentials are used with catalog `TGlobal_gsp`.
+Configured security-database failures refuse entry. Production game entry requires both game and global data;
+DB-free synthetic gameplay is available only through the test harness.
+
+Tests include fake-channel gameplay, real encrypted loopback sockets, and isolated SQL transactions (set
+`T4DEV_TEST_ADMIN` to enable those). Reproducible performance checks are in
+[`Tools/ServerBenchmarks`](../../Tools/ServerBenchmarks/README.md).
+
+## Original phase history
 
 A C#/.NET 10 port of the C++/ATL **`TMapSvr`** (the per-map / zone game server), byte-compatible with
 this repo's client and SQL baselines. It follows the same architecture as the sibling `TLoginSvr.Net`
@@ -364,62 +648,12 @@ is 3815). A client's path through the stack is `patchsvr → loginsvr → mapsvr
 | `Channels` | `[1]` | Channels announced in `MW_CONNECT_ACK`. |
 | `LogIp` / `LogPort` | 127.0.0.1 / 7000 | UDP log-sink endpoint (integration deferred). |
 | `NoCrypt` | false | Set true to accept clients in plaintext (interop with a plaintext bot/client). |
+| `SaveQueueName` | `<group>-<server>` | SQL save queue ownership scope, protected by a session SQL lock. Keep matching game/global databases; pending/corrupt rows block admission. No save directory or file fallback. |
 | `Db:GameConnectionString` | — | Empty ⇒ run DB-free (char synthesized). |
-| `Db:GlobalConnectionString` | — | Reserved for later phases. |
+| `Db:GlobalConnectionString` | — | Account security codes; falls back to the game server/credentials with catalog `TGlobal_gsp`. |
 
 ## Roadmap
 
-Phases 1–26 cover enter + movement/chat, the persisted character data (inventory/gear/skills/hotkeys), the
-`CTCell` spatial grid, the item/magic template charts, the full `CTObjBase` stat sheet (primary stats,
-MaxHP/MaxMP, AP/DP, `CS_CHARSTATINFO`), item manipulation (`CS_MOVEITEM` move/swap/split/merge/drop +
-equip/unequip incl. two-handed off-hand auto-eviction, `CS_ITEMUSE` HP/MP potions), the money currency
-core + durability repair (`CS_DURATIONREP`), field-monster grid occupancy + visibility
-(`CS_ADDMON_ACK`/`CS_DELMON_ACK`), the monster spawn pipeline (charts + `SE_DEFAULT` regen), the combat
-spine (`CS_DEFEND` physical damage → death → respawn), the attack-announce half (`CS_SKILLUSE` skill
-chart + caster MP/HP cost + reuse cooldown + power broadcast), skill-data damage scaling (`TSKILLDATA`),
-HP/MP regen (`Recover`), loot/exp on death (attacker-scaled exp + level-up + money corpse), monster idle
-roam (`CS_MONACTION_ACK`), monster aggro/chase (target-on-hit → `TA_FOLLOW` → leash), and monster-attacks-
-player (melee AP−DP + player death), player revival (`CS_REVIVAL`), item drop-loot (`TMONITEMCHART` →
-corpse items → take), NPC shops (`CS_NPCTALK`/`CS_ITEMBUY`/`CS_ITEMSELL` — talk/buy/sell), and the **quest
-engine** core (`CQuest` + `CheckQuest` + `m_mapQUEST` — accept/objective/turn-in/reward for the foundational
-subtypes), and **persistence** (`TSaveChar` + `TSaveQuest` + the **inventory rewrite** `TSaveInven`/`TSaveItem`
-plus the **incremental `TSaveItemDirect` fast-path** — the char record, quest progress, and items written back on
-a 30-min timer / logout / shutdown *and* per-tick per change, so money and inventory stay consistent on relog and
-survive a crash), and the **maintained-skill buff engine** (Phases 31/35 — `CalcAbilityValue` layered onto every
-stat getter, buff/debuff apply via `CS_DEFEND` + `ForceMaintain`, expiry/`CS_SKILLEND`, drop-on-death, and
-cure/dispel — strip buffs/debuffs + instant HP/MP heal; unblocking the quest **DefendSkill** subtype), and the
-**map switch/gate subsystem** (Phase 32 — chart-driven
-switches + switch-driven gates, `CS_SWITCHCHANGE`/`CS_GATECHANGE`, lock/duration/auto-revert, `TT_RUNSWITCH`/
-`TT_RUNGATE` + `QCT_SWITCH`; unblocking the quest **Switch** subtype), and **quest-driven monster spawn** (Phases
-33–34 — `AddTimelimitedMon`/`DelMonSpawn` + dynamic `RegenDynamicMonster`; unblocking
-**SpawnMon**/**DieMon**/**DropItem**/**Regen**), and the **skill-learn path** (Phase 36 — `UpdateSkill`
-add-only grant + `CS_SKILLBUY_ACK`; unblocking the quest **GiveSkill** subtype), and the **player cabinet**
-(Phase 37 — item warehouse: 3 cabinets × 16 items, open/put-in/take-out, loaded + incrementally persisted), and
-**party gameplay** (Phase 38 — party-keeper shared-exp split + free-for-all party loot + the loot broadcast;
-membership management stays world-authoritative), and **player deal/trade** (Phase 39 — the same-map
-ASK→offer→confirm×2→atomic item+money swap, guard-then-commit), and the **personal store** (Phase 40 —
-open/browse/buy over the seller's own bag items, auto-close when sold out), and the **shield-block roll**
-(Phase 41 — `GetShieldDP`/`GetShieldMDP` inside `CalcDamage`: an equipped shield adds its defence + flags
-`HT_BLOCK`, live for a PC defender vs a monster), and the **`CalcDamage` completion** (Phase 42 —
-`MTYPE_MDAMAGE` MP damage + `MTYPE_HP`/`MP` direct heal/drain + the multi-entry per-exec damage map +
-`MTYPE_HI`/`MI` lifedrain → `MW_GETBLOOD_ACK`), and the direct HP/MP **transfer/swap** execs (Phase 43 —
-`SCT_HPTRANS`/`MPTRANS` + `SDT_STATUS_HPMPCHANGE`/`HPTOMP`, closing the in-process combat-core vitals), and the
-monster **aggro/hate table** (Phase 44 — `m_mapAggro`: highest-cumulative-aggro target with a 10% hysteresis,
-re-pick the next in-view survivor on leave, `ChgHost` retarget + `CS_MONHOST_ACK`), and monster **host
-acquisition** (Phase 45 — aggro-on-sight `SetHost`) and the **data-driven AI engine** (Phase 46 — the
-`TAICHART`/`TAICMDCHART`/`TAICONCHART` interpreter: 14 triggers, 15 command opcodes, `AN_*` guards,
-`AT_AICOMPLETE` chaining, and a local delayed-command scheduler with the `m_dwHostKEY` epoch). The
-rest of the C++ handler surface — the remaining saves (skill/hotkey/companion — state no ported handler mutates yet), the wider combat loop (ranged damage as a
-distinct branch, the buff effection/remain layers + the stat-layer `CalcCure` (instant cure/dispel + transfer/swap are done), `DistributeSkill`, the custom Araz ≥3000 skills, the shield-block durability/reaction tail, PvP), the rest of monster combat
-AI (`MT_GOHOME` walk-back, pack/assist-aggro + call-for-help/flee, monster skills), the priest-resurrection (`CS_REVIVALASK`) + death penalty,
-loot extras (magic/rare rolls, ranged picks, party modes), the rest of the **quest engine** (the
-subsystem-blocked `CQuest` subtypes — Craft/SendPost,
-exotic terms/conditions, magic-item/skill rewards, the client quest-node graph),
-the other NPC types (skill-master/rent, make/upgrade/refine, portal/return,
-auction/arena, cash/magic-item shops),
-the remaining item handlers (non-potion use/upgrade/refine/repair), guild + party/corps **management** (the
-world-authoritative invite/join/leave relays; party *gameplay* is done),
-pets/companions/summons, mail, cash shop, auction, PvP/ranking/tournament, BoW/BR,
-castle/occupation war, duel, minigames, and the `DM_*` save procs — is enumerated with sources in
-[`PORT_STATUS.md`](PORT_STATUS.md). The `RW_*` relay plane is intentionally not ported (no `TRelaySvr` in
-this release), matching `TWorldSvr.Net`.
+See the current completed modules and remaining handlers in [`PORT_STATUS.md`](PORT_STATUS.md).
+Security codes (S7d), cloaks (S7e) and meeting rooms (S7f) are complete. The remaining S7g miscellaneous
+handlers and the relay/multi-map/anti-cheat planes are outside this stack's current scope.

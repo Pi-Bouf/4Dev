@@ -22,6 +22,20 @@ public static class Msg
     public const ushort CT_CONTROL = 0x9301;// control <-> server
     public const ushort CS_CUSTOM = 0x3312;
 
+    public const ushort CS_SC_CREATECODE_REQ = CS_MAP + 0x0300, CS_SC_CREATECODE_ACK = CS_MAP + 0x0301;
+    public const ushort CS_SC_CHANGECODE_REQ = CS_MAP + 0x0302, CS_SC_CHANGECODE_ACK = CS_MAP + 0x0303;
+    public const ushort CS_SC_DISABLECODE_REQ = CS_MAP + 0x0304, CS_SC_DISABLECODE_ACK = CS_MAP + 0x0305;
+    public const ushort CS_SC_ENABLECODE_REQ = CS_MAP + 0x0306, CS_SC_ENABLECODE_ACK = CS_MAP + 0x0307;
+    public const ushort CS_SC_UNLOCK_REQ = CS_MAP + 0x0308, CS_SC_UNLOCK_ACK = CS_MAP + 0x0309;
+    public const ushort CS_SC_CHECKCODE_REQ = CS_MAP + 0x0310, CS_SC_CHECKCODE_ACK = CS_MAP + 0x0311;
+    public const ushort CS_SC_GETLOCKTIME_REQ = CS_MAP + 0x0312, CS_SC_GETLOCKTIME_ACK = CS_MAP + 0x0313;
+    public const ushort CS_REGGUILDCLOAK_REQ = CS_MAP + 0x0217, CS_REGGUILDCLOAK_ACK = CS_MAP + 0x0218;
+    public const ushort CS_CUSTOMCLOAK_LIST_ACK = CS_MAP + 0x0395, CS_CUSTOMCLOAK_CHANGE_ACK = CS_MAP + 0x0396;
+    public const ushort CS_CUSTOMCLOAK_LIST_REQ = CS_MAP + 0x0397, CS_CUSTOMCLOAK_CHANGE_REQ = CS_MAP + 0x0398;
+    public const ushort CS_MEETINGROOM_REQ = CS_MAP + 0x024E, CS_MEETINGROOM_ACK = CS_MAP + 0x024F;
+    public const ushort MW_MEETINGROOM_REQ = MW_BASE + 0x0172, MW_MEETINGROOM_ACK = MW_BASE + 0x0173;
+    public const ushort SM_MEETINGROOM_REQ = SM_BASE + 0x002A, SM_MEETINGROOM_ACK = SM_BASE + 0x002B;
+
     // ================= client plane (CS_MAP) =================
     public const ushort CS_CONNECT_REQ = CS_MAP + 0x0001;
     public const ushort CS_CONNECT_ACK = CS_MAP + 0x0002;   // sent only on error (TCONNECT_RESULT)
@@ -50,6 +64,8 @@ public static class Msg
     public const ushort CS_ITEMUSE_REQ = CS_MAP + 0x004A;    // use an item (potion): wTempID/bInven/bItem/wDelayGroup/bCount + targets
     public const ushort CS_ITEMUSE_ACK = CS_MAP + 0x004B;    // BYTE result, WORD delayGroup, BYTE kind, DWORD delay
     public const ushort CS_MONEY_ACK = CS_MAP + 0x0049;      // DWORD gold, silver, cooper (money changed)
+    public const ushort CS_DURATIONDEC_ACK = CS_MAP + 0x01BA;    // BYTE inventory, BYTE slot, DWORD durability
+    public const ushort CS_DURATIONEND_ACK = CS_MAP + 0x01BB;    // BYTE inventory, BYTE slot, BYTE deleted
     public const ushort CS_DURATIONREP_REQ = CS_MAP + 0x01BC;    // repair durability: bNeedCost/bType/bInven/bItem/wNpcID/bNpcInven/bNpcItem
     public const ushort CS_DURATIONREPCOST_ACK = CS_MAP + 0x01BD; // DWORD cost, BYTE discountRate (the bNeedCost quote)
     public const ushort CS_DURATIONREP_ACK = CS_MAP + 0x01BE;    // BYTE result, BYTE count, count×{bInven,bItem,DWORD duraMax,DWORD duraCur}
@@ -608,6 +624,8 @@ public static class Msg
     public const ushort CS_ADDSELFOBJ_ACK = CS_MAP + 0x00F4;        // a placed object (C++ CTSelfObj) comes into view
     public const ushort CS_DELSELFOBJ_ACK = CS_MAP + 0x00F5;        // dwObjID · bExitMap
     public const ushort CS_CHGMODERECALLMON_REQ = CS_MAP + 0x00E2;  // dwMonID · bMode
+    public const ushort CS_OTHERSELF_REQ = CS_MAP + 0x0137;       // dwHostID · dwMonID (doppelganger owner appearance)
+    public const ushort CS_OTHERSELF_ACK = CS_MAP + 0x0138;       // dwMonID · owner appearance · equipped items
     public const ushort MW_CREATERECALLMON_REQ = MW_BASE + 0x00B8;
     public const ushort MW_CREATERECALLMON_ACK = MW_BASE + 0x00B9;
     public const ushort MW_RECALLMONDEL_REQ = MW_BASE + 0x00BA;     // charId · key · monId · bForever
@@ -823,6 +841,8 @@ public static class Msg
     public const ushort MW_SOULMATEEND_REQ = MW_BASE + 0x010B;
     public const ushort MW_SOULMATEEND_ACK = MW_BASE + 0x010C;
     public const ushort MW_LEVELUP_ACK = MW_BASE + 0x0027;           // dwCharID, dwKey, bLevel
+    public const ushort MW_MONSTERDIE_REQ = MW_BASE + 0x0042;
+    public const ushort MW_MONSTERDIE_ACK = MW_BASE + 0x0043;
     public const ushort MW_GUILDESTABLISH_REQ = MW_BASE + 0x002A;
     public const ushort MW_GUILDESTABLISH_ACK = MW_BASE + 0x002B;
     public const ushort MW_GUILDDISORGANIZATION_REQ = MW_BASE + 0x002C;
@@ -1029,7 +1049,8 @@ public static class Msg
     public const ushort MW_CHAT_ACK = MW_BASE + 0x003E;
     public const ushort MW_RESETCONNECTION_REQ = MW_BASE + 0x0040;
     public const ushort MW_RESETCONNECTION_ACK = MW_BASE + 0x0041;
-    public const ushort MW_GETBLOOD_ACK = MW_BASE + 0x008A;   // HP/MP lifedrain (MTYPE_HI/MI) → world grants it to the attacker
+    public const ushort MW_GETBLOOD_REQ = MW_BASE + 0x0089;   // World -> main: HP/MP gain or reflected damage
+    public const ushort MW_GETBLOOD_ACK = MW_BASE + 0x008A;   // HP/MP lifedrain or reflected damage -> World
     public const ushort MW_CONLIST_REQ = MW_BASE + 0x00BF;
     public const ushort MW_CONLIST_ACK = MW_BASE + 0x00C0;
     public const ushort MW_ENTERSOLOMAP_REQ = MW_BASE + 0x00C1;

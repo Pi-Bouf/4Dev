@@ -21,6 +21,7 @@ public sealed partial class MapService
     private readonly MapState _state;
     private readonly IWorldSink _world;
     private readonly GameDatabase? _gameDb;
+    private readonly IMapEntryStore? _entryStore;
     private readonly TemplateStore _templates;
     private readonly ILogger<MapService> _log;
 
@@ -32,13 +33,19 @@ public sealed partial class MapService
     public uint NowMs { get; set; }
 
     public MapService(MapServerOptions opt, MapState state, IWorldSink world, GameDatabase? gameDb,
-        TemplateStore templates, ILogger<MapService> log)
+        TemplateStore templates, ILogger<MapService> log, IMapEntryStore? entryStore = null)
     {
         _opt = opt;
         _state = state;
         _world = world;
         _gameDb = gameDb;
+        _entryStore = entryStore ?? gameDb;
         PostStore = gameDb;
+        OperatorPostStore = gameDb;
+        QuestPostStore = gameDb;
+        TerritoryOccupationStore = gameDb;
+        QuestProgressStore = gameDb;
+        CharacterAuxiliaryStore = gameDb;
         PetStore = gameDb;
         CompanionStore = gameDb;
         GuildSkillStore = gameDb;
@@ -47,6 +54,8 @@ public sealed partial class MapService
         HeroStore = gameDb;
         GmStore = gameDb;
         CashStore = gameDb;
+        SecurityCodeStore = gameDb;
+        CloakStore = gameDb;
         _templates = templates;
         _log = log;
     }
@@ -73,9 +82,20 @@ public sealed partial class MapService
         return ValueTask.CompletedTask;
     }
 
+    public async Task OnClientDisconnectAsync(ClientSession session)
+    {
+        if (!session.IsControl && session.IsMain && session.State == EnterState.InGame && session.Char is { } ch)
+            CheckQuest(session, 0, ch.PosX, ch.PosY, ch.PosZ, ch.MapId, QttMapId, 11 /*TT_LEAVEMAP*/, 1);
+        await FlushTerritoryWritesAsync();
+        await FlushQuestPostsAsync(); // children must be included in the logout snapshot below
+        FlushQuestCheckpoints(except: session.Char);
+        OnClientDisconnect(session);
+    }
+
     public void OnClientDisconnect(ClientSession session)
     {
         if (session.IsControl) { if (_control == session) _control = null; return; }        // the control server's link (MapService.Gm.cs)
+        CancelDealOnLeave(session);
         // Broadcast the leave to neighbours before de-registering.
         var watching = new List<Monster>();
         if (session.State == EnterState.InGame && session.Char is not null)
@@ -97,6 +117,9 @@ public sealed partial class MapService
         if (session.Char is { } leaving) { ClearRecalls(session, leaving); ClearCompanionObjs(leaving); }
         if (session.CharId != 0) EraseBill(session.CharId, 0);   // C++ SM_POSTBILLERASE_REQ(id, 0)
         _state.Remove(session);
+        ReleaseMeetingRoom(session, disconnect: true);
+        _meetingInvitations.Remove(session.CharId);
+        if (!_state.ByChar.Values.Any(s => s.UserId == session.UserId)) _securityCodes.Remove(session.UserId);
 
         // C++ CTMap::LeaveMAP(player) takes the player off its cell first, then runs LeavePlayer over the 3×3:
         // every monster that could see it drops its hate and re-checks its host, so one this player was
@@ -110,12 +133,30 @@ public sealed partial class MapService
     public async Task DispatchClientAsync(ClientSession session, byte[] packet)
     {
         var r = new PacketReader(packet);
+        using var questResponses = r.Id is Msg.CS_QUESTEXEC_REQ or Msg.CS_QUESTDROP_REQ
+            ? session.DeferResponses() : null;
         try
         {
             if (session.IsControl) { DispatchControl(session, r); return; }                     // the admin tool's link (MapService.Gm.cs)
+            if (r.Id != Msg.CS_CONNECT_REQ && session.State is EnterState.Connected or EnterState.Entering) return;
+            if (session.TeleportPending && r.Id is not (Msg.CS_CONREADY_REQ or Msg.CS_PINGMEASUREMENT_REQ
+                or Msg.CS_DISCONNECT_REQ or Msg.CS_COUNTDOWN_REQ)) return;
+            if (session.SecurityStateFailed) return;
             if (TournamentRefuses(session, r.Id)) return;                                       // MapService.TournamentMatch.cs
+            if (SecurityRefuses(session, r.Id)) return;
             switch (r.Id)
             {
+                case Msg.CS_MEETINGROOM_REQ: OnCS_MEETINGROOM_REQ(session, r); break;
+                case Msg.CS_CUSTOMCLOAK_LIST_REQ: await OnCS_CUSTOMCLOAK_LIST_REQ(session); break;
+                case Msg.CS_CUSTOMCLOAK_CHANGE_REQ: await OnCS_CUSTOMCLOAK_CHANGE_REQ(session, r); break;
+                case Msg.CS_REGGUILDCLOAK_REQ: OnCS_REGGUILDCLOAK_REQ(session, r); break;
+                case Msg.CS_SC_CREATECODE_REQ:
+                case Msg.CS_SC_CHANGECODE_REQ:
+                case Msg.CS_SC_DISABLECODE_REQ:
+                case Msg.CS_SC_ENABLECODE_REQ:
+                case Msg.CS_SC_UNLOCK_REQ:
+                case Msg.CS_SC_CHECKCODE_REQ:
+                case Msg.CS_SC_GETLOCKTIME_REQ: await OnSecurityCode(session, r); break;
                 case Msg.CS_CONNECT_REQ: await OnCS_CONNECT_REQ(session, r); break;
                 case Msg.CS_POSTSEND_REQ: await OnCS_POSTSEND_REQ(session, r); break;
                 case Msg.CS_POSTLIST_REQ: await OnCS_POSTLIST_REQ(session, r); break;
@@ -123,7 +164,7 @@ public sealed partial class MapService
                 case Msg.CS_POSTDEL_REQ: await OnCS_POSTDEL_REQ(session, r); break;
                 case Msg.CS_POSTGETITEM_REQ: await OnCS_POSTGETITEM_REQ(session, r); break;
                 case Msg.CS_POSTRETURN_REQ: await OnCS_POSTRETURN_REQ(session, r); break;
-                case Msg.CS_CONREADY_REQ: OnCS_CONREADY_REQ(session, r); break;
+                case Msg.CS_CONREADY_REQ: await OnCS_CONREADY_REQ(session, r); break;
                 case Msg.CS_HOTKEYADD_REQ: OnCS_HOTKEYADD_REQ(session, r); break;
                 case Msg.CS_INVENADD_REQ: OnCS_INVENADD_REQ(session, r); break;
                 case Msg.CS_ITEMUPGRADE_REQ: OnCS_ITEMUPGRADE_REQ(session, r); break;
@@ -142,6 +183,7 @@ public sealed partial class MapService
                 case Msg.CS_DELETESADDLE_REQ: await OnCS_DELETESADDLE_REQ(session, r); break;
                 case Msg.CS_DELRECALLMON_REQ: OnCS_DELRECALLMON_REQ(session, r); break;
                 case Msg.CS_CHGMODERECALLMON_REQ: OnCS_CHGMODERECALLMON_REQ(session, r); break;
+                case Msg.CS_OTHERSELF_REQ: OnCS_OTHERSELF_REQ(session, r); break;
                 case Msg.CS_CREATECOMPANION_REQ: OnCS_CREATECOMPANION_REQ(session, r); break;
                 case Msg.CS_DELETECOMPANION_REQ: await OnCS_DELETECOMPANION_REQ(session, r); break;
                 case Msg.CS_COMPANIONRECALL_REQ: OnCS_COMPANIONRECALL_REQ(session, r); break;
@@ -282,7 +324,7 @@ public sealed partial class MapService
                 case Msg.CS_CASHITEMPUTIN_REQ: await OnCS_CASHITEMPUTIN_REQ(session, r); break;
                 case Msg.CS_CASHCABINETBUY_REQ: await OnCS_CASHCABINETBUY_REQ(session, r); break;
                 case Msg.CS_ACTITEMSUSE_REQ: OnCS_ACTITEMSUSE_REQ(session, r); break;
-                case Msg.CS_USEMEDALITEM_REQ: OnCS_USEMEDALITEM_REQ(session, r); break;
+                case Msg.CS_USEMEDALITEM_REQ: await OnCS_USEMEDALITEM_REQ(session, r); break;
                 case Msg.CS_GETREWARDS_REQ: OnCS_GETREWARDS_REQ(session, r); break;
                 case Msg.CS_STOPTHECLOCK_REQ: await OnCS_STOPTHECLOCK_REQ(session, r); break;
                 case Msg.CS_WASTEREFINE_REQ: OnCS_WASTEREFINE_REQ(session, r); break;
@@ -333,7 +375,7 @@ public sealed partial class MapService
                 case Msg.CS_LEAVEAB_REQ: OnAggroBoundReq(session, r, AiTrigger.LeaveAb); break;
                 case Msg.CS_CHARSTATINFO_REQ: OnCS_CHARSTATINFO_REQ(session, r); break;
                 case Msg.CS_MOVEITEM_REQ: OnCS_MOVEITEM_REQ(session, r); break;
-                case Msg.CS_ITEMUSE_REQ: OnCS_ITEMUSE_REQ(session, r); break;
+                case Msg.CS_ITEMUSE_REQ: await OnCS_ITEMUSE_REQ(session, r); break;
                 case Msg.CS_DURATIONREP_REQ: OnCS_DURATIONREP_REQ(session, r); break;
                 case Msg.CS_MONMOVE_REQ: OnCS_MONMOVE_REQ(session, r); break;
                 case Msg.CS_ACTION_REQ: OnCS_ACTION_REQ(session, r); break;
@@ -388,6 +430,21 @@ public sealed partial class MapService
         catch (Exception ex)
         {
             _log.LogError(ex, "Client handler 0x{Id:X4} failed.", r.Id);
+        }
+        try
+        {
+            await FlushTerritoryWritesAsync();
+            await FlushQuestPostsAsync();
+            FlushQuestCheckpoints();
+        }
+        catch
+        {
+            if (questResponses is not null)
+            {
+                questResponses.Discard(); session.EntryValidated = false;
+                session.State = EnterState.Entering; session.Conn.Close();
+            }
+            throw;
         }
     }
 
@@ -513,6 +570,7 @@ public sealed partial class MapService
                 case Msg.MW_LOCALOCCUPY_REQ: OnMW_LOCALOCCUPY_REQ(r); break;
                 case Msg.MW_GAINPVPPOINT_REQ: OnMW_GAINPVPPOINT_REQ(r); break;
                 case Msg.MW_BATTLEMODESTATUS_ACK: OnMW_BATTLEMODESTATUS_ACK(r); break;
+                case Msg.MW_MEETINGROOM_REQ: OnMW_MEETINGROOM_REQ(r); break;
                 case Msg.MW_CASHSHOPSTOP_REQ: OnMW_CASHSHOPSTOP_REQ(r); break;                    // MapService.CashShop.cs
                 case Msg.MW_CMGIFT_REQ: await OnMW_CMGIFT_REQ(r); break;                         // MapService.Gm.cs
                 case Msg.MW_CMGIFTRESULT_REQ: OnMW_CMGIFTRESULT_REQ(r); break;
@@ -537,7 +595,7 @@ public sealed partial class MapService
                 case Msg.MW_CHARSTATINFO_REQ: OnMW_CHARSTATINFO_REQ(r); break;
                 case Msg.MW_CHARSTATINFOANS_REQ: OnMW_CHARSTATINFOANS_REQ(r); break;
                 case Msg.MW_ROUTE_REQ: OnMW_ROUTE_REQ(r); break;
-                case Msg.MW_ENTERCHAR_REQ: OnMW_ENTERCHAR_REQ(r); break;
+                case Msg.MW_ENTERCHAR_REQ: await OnMW_ENTERCHAR_REQ(r); break;
                 case Msg.MW_MONTHRANKLIST_REQ: OnMW_MONTHRANKLIST_REQ(r); break;
                 case Msg.MW_MONTHRANKUPDATE_REQ: OnMW_MONTHRANKUPDATE_REQ(r); break;
                 case Msg.MW_MONTHRANKRESET_REQ: OnMW_MONTHRANKRESET_REQ(r); break;
@@ -563,6 +621,8 @@ public sealed partial class MapService
                 case Msg.MW_CREATESPOLECNIKMON_REQ: OnMW_CREATESPOLECNIKMON_REQ(r); break;
                 case Msg.MW_SPOLECNIKMONDEL_REQ: OnMW_SPOLECNIKMONDEL_REQ(r); break;
                 case Msg.MW_RECALLMONDATA_REQ: break;   // cross-server summon handoff — never sent to a single map server
+                case Msg.MW_GETBLOOD_REQ: OnMW_GETBLOOD_REQ(r); break;
+                case Msg.MW_MONSTERDIE_REQ: OnMW_MONSTERDIE_REQ(r); break;
                 case Msg.MW_CHGPARTYCHIEF_REQ: OnMW_CHGPARTYCHIEF_REQ(r); break;
                 case Msg.MW_CHGPARTYTYPE_REQ: OnMW_CHGPARTYTYPE_REQ(r); break;
                 case Msg.MW_PARTYMANSTAT_REQ: OnMW_PARTYMANSTAT_REQ(r); break;
@@ -581,6 +641,9 @@ public sealed partial class MapService
         {
             _log.LogError(ex, "World handler 0x{Id:X4} failed.", r.Id);
         }
+        await FlushTerritoryWritesAsync();
+        await FlushQuestPostsAsync();
+        FlushQuestCheckpoints();
     }
 
     // ---- world link lifecycle ----
@@ -597,6 +660,10 @@ public sealed partial class MapService
     public void OnWorldDisconnect()
     {
         _worldReady = false;
+        // A loading client cannot complete its routing cycle after the world loses the session. Closing
+        // it runs the normal save/disconnect path and lets it re-enter instead of remaining frozen forever.
+        foreach (var s in _state.ByChar.Values)
+            if (s.TeleportPending) s.Conn.Close();
         _log.LogWarning("World link down; clients will re-handshake on reconnect.");
     }
 
@@ -604,10 +671,11 @@ public sealed partial class MapService
     {
         _tickSeconds++;
         NowMs = unchecked((uint)(_tickSeconds * 1000L)); // advance the map ms clock (skill cooldowns)
-        RunDbResults();                        // the database's answers, applied here (MapService.Fort.cs)
+        RunDbResults();                        // deferred guild-board DB callbacks, applied on the actor
         RunGodBallCmds();                      // the castle wars' god ball commands and power race (MapService.Castle.cs)
         RunMonsterRegen(_tickSeconds * 1000L); // monster spawn/respawn regen (map clock in ms)
         RunMaintainSkills(NowMs);              // expire ended buffs/debuffs (C++ CheckMaintainSkill, before Recover)
+        RunQuestTimers();                      // quest deadlines are authoritative even without a client notification
         RunSwitchReverts(NowMs);               // auto-revert duration-limited switches (C++ m_vTSWITCHOBJ sweep)
         RunRecover(NowMs);                     // HP/MP regeneration (players + monsters)
         RunAftermath(NowMs);                   // one step of death-penalty recovery when due (CTPlayer::OnTimer)
@@ -622,11 +690,15 @@ public sealed partial class MapService
         RunPeriodicSaves(NowMs);               // 30-min per-char DB save (no-op DB-free); off-thread write
         FlushItemDirect();                     // incremental item persistence (TSaveItemDirect); off-thread write
         await RunPostBills();                  // unpaid bills past 3 days go back to their sender
+        await RetryWelcomeMailAsync();         // SQL-only first-entry gifts, including interrupted dispatch
         await RunAuctionEnds();                // auctions whose time is up (MapService.Auction.cs)
         ArenaTick();                           // the arenas' ready and battle clocks (MapService.Arena.cs)
         TournamentTick();                      // the tournament's countdowns and drawn matches (MapService.TournamentMatch.cs)
         HelpMessageTick();                     // the event help message on and off (MapService.Gm.cs)
+        MeetingRoomTick();
         RunDuels();                            // duel standby → start → timeout → clear (the SM_DUEL* timer)
-        // Still deferred here: war timers — see PORT_STATUS.md.
+        await FlushTerritoryWritesAsync();
+        await FlushQuestPostsAsync();
+        FlushQuestCheckpoints();
     }
 }
